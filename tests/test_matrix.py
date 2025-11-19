@@ -128,3 +128,82 @@ def test_lemma_3_1_rectangular(components):
     
     assert ops.mat_mul(U, A) == T
     assert verify_echelon_structure(T)
+
+def test_pad_matrix(components):
+    """
+    Verifies that pad_matrix adds zeros to the right and bottom.
+    """
+    ring, ops = components
+    A = [
+        [1, 2],
+        [3, 4]
+    ]
+    pad_size = 2
+    B = ops.pad_matrix(A, pad_size)
+    
+    # Check dimensions
+    assert len(B) == 4
+    assert len(B[0]) == 4
+    
+    # Check integrity of original data (top-left)
+    assert B[0][0] == 1 and B[1][1] == 4
+    
+    # Check padding (bottom-right should be 0)
+    assert B[2][2] == 0 and B[3][3] == 0
+    assert B[0][3] == 0 # Right padding
+    assert B[3][0] == 0 # Bottom padding
+
+def test_embed_block(components):
+    """
+    Verifies that a small block is correctly written into a large matrix.
+    """
+    ring, ops = components
+    # 4x4 Zero matrix
+    Big = [[0]*4 for _ in range(4)]
+    
+    # 2x2 Block of ones
+    Small = [
+        [1, 1],
+        [1, 1]
+    ]
+    
+    # Embed at (1, 1) -> Center 
+    ops.embed_block(Big, Small, 1, 1)
+    
+    expected = [
+        [0, 0, 0, 0],
+        [0, 1, 1, 0],
+        [0, 1, 1, 0],
+        [0, 0, 0, 0]
+    ]
+    assert Big == expected
+
+def test_embed_identity(components):
+    """
+    Verifies the creation of a Global Transform matrix.
+    It should be an Identity matrix EVERYWHERE except where the block is embedded.
+    """
+    ring, ops = components
+    
+    # We want a 4x4 global transform.
+    # We have a 2x2 local transform acting on the middle rows/cols.
+    LocalT = [
+        [2, 3],
+        [4, 5]
+    ]
+    
+    # Embed at offset (1,1)
+    GlobalT = ops.embed_identity(4, LocalT, 1, 1)
+    
+    # Check that indices OUTSIDE the block are Identity
+    assert GlobalT[0][0] == 1
+    assert GlobalT[3][3] == 1
+    assert GlobalT[0][1] == 0
+    assert GlobalT[3][0] == 0
+    
+    # Check that indices INSIDE the block match LocalT
+    # GlobalT[1][1] should be LocalT[0][0]
+    assert GlobalT[1][1] == 2
+    assert GlobalT[1][2] == 3
+    assert GlobalT[2][1] == 4
+    assert GlobalT[2][2] == 5

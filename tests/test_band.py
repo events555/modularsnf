@@ -202,3 +202,66 @@ def test_shift_lemma_7_4(setup_components):
     # The algorithm applies U such that U*C1 is Upper Triangular.
     # For a 2x2, this means the bottom-left entry must be 0.
     assert C1_prime[1][0] == 0, "C1 block should be Upper Triangular after shift"
+
+def test_full_reduction_step(setup_components):
+    """
+    Tests one full pass of BandReduction (Proposition 7.1).
+    If input is b-banded, output should be floor(b/2)+1 banded.
+    """
+    ring, reducer, ops = setup_components
+    n = 8
+    b = 4
+    target_b = (b // 2) + 1 # Should be 3
+    
+    # Create an Upper 4-Banded Matrix
+    # We fill it carefully to ensure it's NOT 3-banded initially
+    A = [[0]*n for _ in range(n)]
+    for i in range(n):
+        for j in range(n):
+            # Fill diagonal and up to b-1 super-diagonals
+            if 0 <= j - i < b:
+                val = (i * n + j) % 11 + 1 # Non-zero
+                A[i][j] = val
+            else:
+                A[i][j] = 0
+                
+    # Verify initial state
+    assert reducer.is_upper_b_banded(A, b)
+    assert not reducer.is_upper_b_banded(A, target_b), "Test setup failed: Matrix is already reduced."
+
+    # Run Reduction
+    A_prime, U, V = reducer.reduce(A, b)
+
+    # 1. Verify Bandwidth Reduction
+    assert reducer.is_upper_b_banded(A_prime, target_b), \
+        f"Matrix was not reduced to {target_b}-banded form."
+
+    # 2. Verify Equivalence
+    # A' = U * A * V
+    U_A = ops.mat_mul(U, A)
+    U_A_V = ops.mat_mul(U_A, V)
+    assert U_A_V == A_prime, "Equivalence lost: A' != U * A * V"
+
+    # 3. Verify Unimodularity
+    assert is_unit(get_det_mod_n(U, ring), ring)
+    assert is_unit(get_det_mod_n(V, ring), ring)
+
+def test_reduction_boundary_padding(setup_components):
+    """
+    Tests that reduction works even when matrix dimensions 
+    don't align perfectly with block sizes (requires padding).
+    """
+    ring, reducer, ops = setup_components
+    n = 5
+    b = 3 # s1=1, n1=3, s2=2, n2=4. 
+    # n2 (4) is almost as big as n (5). Padding will be required.
+    
+    A = [[0]*n for _ in range(n)]
+    for i in range(n):
+        for j in range(n):
+            if 0 <= j - i < b: A[i][j] = 1
+
+    A_prime, _, _ = reducer.reduce(A, b)
+    
+    target_b = (b // 2) + 1 # 2
+    assert reducer.is_upper_b_banded(A_prime, target_b)
