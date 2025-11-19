@@ -78,7 +78,7 @@ class BandReduction:
         C1 = [row[:s2] for row in C[:s2]]
         C1_T = self.ops.transpose(C1)
         U_prime_T, _ = self.ops.lemma_3_1_transform(C1_T)
-        # U corresponds to U in [cite: 1223]
+        # U corresponds to U in
         U = self.ops.transpose(U_prime_T) # Wait, if U' * C1^T = T, then C1 * U'^T = T^T (lower)
         # The paper says "principal transform U^T such that C1^T U^T is lower triangular" 
         # If U_prime * C1_T = Echelon (Upper), then (U_prime * C1_T)^T = C1 * U_prime^T = Lower.
@@ -89,7 +89,7 @@ class BandReduction:
         # Let A = C1^T. L * C1^T = Upper.
         # (L * C1^T)^T = C1 * L^T = Lower.
         # So the transform applied to the RIGHT of C1 (columns) is L^T.
-        # But the formula [cite: 1223] applies U to the LEFT of C.
+        # But the formula applies U to the LEFT of C.
         # "U^T such that C1^T U^T is lower" -> U acts on rows of C1? No, U^T acts on columns of C1^T.
         # This implies U acts on ROWS of C1. 
         # Let's assume the standard: Use Lemma 3.1 on C1 (cols) to find U such that U*C1 is Upper.
@@ -130,7 +130,7 @@ class BandReduction:
                 if offset+i < len(C) and offset+j < len(C):
                     V_full[offset+i][offset+j] = V_local[i][j]
                     
-        # Final C' [cite: 1223]
+        # Final C'
         C_prime = self.ops.mat_mul(C_step1, V_full)
         
         return C_prime, U_full, V_full

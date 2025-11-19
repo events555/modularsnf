@@ -40,7 +40,7 @@ class RingZModN:
 
     def gcdex(self, a, b):
         """
-        Implements Gcdex(a, b) [cite: 299-301]
+        Implements Gcdex(a, b)
         Returns g, s, t, u, v such that:
         [[s, t], [u, v]] * [a, b]^T = [g, 0]^T
         and sv - tu is a unit.
