@@ -1,5 +1,6 @@
 import pytest
 import random
+from math import gcd as int_gcd
 from modularsnf.ring import RingZModN
 
 @pytest.fixture
@@ -14,6 +15,14 @@ def is_unit(val, ring):
     while b:
         a, b = b, a % b
     return a == 1
+
+
+def gcd_chain(*values):
+    """Computes gcd over multiple integers using Python's math.gcd."""
+    result = 0
+    for val in values:
+        result = int_gcd(result, val)
+    return result
 
 def test_gcdex_fundamental_identity(ring):
     """
@@ -68,3 +77,26 @@ def test_gcdex_divisibility_condition(ring):
     a, b = 3, 9
     _, s, t, u, v = ring.gcdex(a, b)
     assert s == 1 and v == 1 and t == 0
+
+
+def test_stab_preserves_gcd(ring):
+    """Stab should find x so gcd(a + x*b, c, N) matches gcd(a, b, c, N)."""
+    cases = [
+        (2, 4, 6),     # shared even factors
+        (3, 6, 9),     # multiples of three
+        (5, 0, 7),     # zero b reduces to original gcd
+        (10, 8, 4),    # mix of even numbers with zero divisors
+        (11, 5, 8),    # includes relatively prime elements
+    ]
+
+    for a, b, c in cases:
+        x = ring.stab(a, b, c)
+        assert 0 <= x < ring.N
+
+        target = gcd_chain(a % ring.N, b % ring.N, c % ring.N, ring.N)
+        stabilized = gcd_chain((a + x * b) % ring.N, c % ring.N, ring.N)
+
+        assert stabilized == target, (
+            f"Stab failed for a={a}, b={b}, c={c}. "
+            f"x={x}, target={target}, got={stabilized}"
+        )
