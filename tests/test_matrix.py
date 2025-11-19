@@ -207,3 +207,22 @@ def test_embed_identity(components):
     assert GlobalT[1][2] == 3
     assert GlobalT[2][1] == 4
     assert GlobalT[2][2] == 5
+
+
+def test_create_diagonal(components):
+    """Ensures create_diagonal places entries on the diagonal and zeros elsewhere."""
+    ring, ops = components
+    entries = [3, 0, 5, 7]
+
+    D = ops.create_diagonal(entries)
+
+    n = len(entries)
+    assert len(D) == n
+    assert all(len(row) == n for row in D)
+
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                assert D[i][j] == entries[i]
+            else:
+                assert D[i][j] == 0
