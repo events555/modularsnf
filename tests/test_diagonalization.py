@@ -144,21 +144,44 @@ def test_prop_7_7_full_diagonal_reduction(components):
 def test_randomized_diagonal_reduction(components):
     """
     Fuzz test for diagonal reduction with random inputs.
+    Iterates through dimensions 2 through 6 to catch partitioning bugs.
     """
     ring, reducer, ops = components
     
-    for _ in range(5):
-        n = 4
+    # Iterate through different sizes to catch edge cases in recursion splitting
+    for n in range(2, 7):
         raw = [random.randint(0, 11) for _ in range(n)]
         D = ops.create_diagonal(raw)
         
         S, U, V = reducer.reduce_diagonal(D)
         
-        # Equivalence
+        # 1. Equivalence
         UD = ops.mat_mul(U, D)
         UDV = ops.mat_mul(UD, V)
         assert UDV == S
         
-        # SNF
+        # 2. SNF
         is_snf, msg = verify_smith_form_properties(S, ring)
-        assert is_snf, f"Random SNF failed for input {raw}: {msg}"
+        assert is_snf, f"Random SNF failed for input {raw} (n={n}): {msg}"
+        
+def test_regression_odd_dimensions(components):
+    """
+    Regression test for recursion depth errors.
+    Previously, odd dimensions (like 3) caused infinite recursion 
+    because the split logic generated empty blocks (size 0) 
+    without a base case guard.
+    """
+    ring, reducer, ops = components
+    
+    # Dimension 3 splits into 1 and 2. 
+    # The size-1 block splits into 0 and 1.
+    raw = [2, 6, 4] 
+    D = ops.create_diagonal(raw)
+    
+    # This line would crash without the 'if n==0' guard in diagonalization.py
+    S, U, V = reducer.reduce_diagonal(D)
+    
+    # Verify standard properties just in case
+    UD = ops.mat_mul(U, D)
+    UDV = ops.mat_mul(UD, V)
+    assert UDV == S
