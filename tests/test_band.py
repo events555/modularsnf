@@ -1,5 +1,6 @@
 import pytest
 import copy
+import random
 from modularsnf.ring import RingZModN
 from modularsnf.bandreduction import BandReduction
 from modularsnf.matrix import MatrixOps
@@ -69,6 +70,26 @@ def is_echelon(A):
         if current_pivot <= last_pivot:
             return False
         last_pivot = current_pivot
+    return True
+
+def is_bidiagonal(A):
+    """
+    Verifies if matrix A is upper 2-banded (Bi-diagonal).
+    Allowed non-zeros: A[i][i] and A[i][i+1].
+    All else must be zero.
+    """
+    rows = len(A)
+    cols = len(A[0])
+    
+    for r in range(rows):
+        for c in range(cols):
+            # Main diagonal (j=i) and Super diagonal (j=i+1) are allowed.
+            if c == r or c == r + 1:
+                continue
+            
+            # Everything else must be zero
+            if A[r][c] != 0:
+                return False
     return True
 
 # --- Fixtures ---
@@ -265,3 +286,42 @@ def test_reduction_boundary_padding(setup_components):
     
     target_b = (b // 2) + 1 # 2
     assert reducer.is_upper_b_banded(A_prime, target_b)
+
+def test_bidiagonalize_randomized(setup_components):
+    """
+    Validates Corollary 7.5 (Phase 1 Complete).
+    Takes random upper triangular matrices and ensures they are
+    reduced to 2-banded form via unimodular transforms.
+    """
+    ring, reducer, ops = setup_components
+    
+    # Run multiple randomized trials
+    for _ in range(5):
+        n = 6 # Size large enough to require multiple reduction steps
+              # (Start b=6 -> b=4 -> b=3 -> b=2)
+        
+        # Generate Random Upper Triangular Matrix
+        A = [[0]*n for _ in range(n)]
+        for r in range(n):
+            for c in range(n):
+                if c >= r:
+                    # Random values in Z/12
+                    A[r][c] = random.randint(0, 11)
+        
+        # Run Algorithm
+        B, U, V = reducer.bidiagonalize(A)
+        
+        # 1. Verify Structure (Must be 2-banded)
+        assert is_bidiagonal(B), \
+            f"Result matrix is not 2-banded (Bi-diagonal).\nResult:\n{B}"
+            
+        # 2. Verify Equivalence (B = U * A * V)
+        UA = ops.mat_mul(U, A)
+        UAV = ops.mat_mul(UA, V)
+        assert UAV == B, "Equivalence lost: B != U * A * V"
+        
+        # 3. Verify Unimodularity
+        det_U = get_det_mod_n(U, ring)
+        det_V = get_det_mod_n(V, ring)
+        assert is_unit(det_U, ring), f"U is not unimodular (Det={det_U})"
+        assert is_unit(det_V, ring), f"V is not unimodular (Det={det_V})"
