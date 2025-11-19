@@ -151,3 +151,13 @@ class MatrixOps:
         self.embed_block(I, small_block, r_offset, c_offset)
         
         return I
+    
+    def create_diagonal(self, entries):
+        """
+        Creates a diagonal matrix from a list of entries.
+        """
+        n = len(entries)
+        D = [[0]*n for _ in range(n)]
+        for i in range(n):
+            D[i][i] = entries[i]
+        return D
