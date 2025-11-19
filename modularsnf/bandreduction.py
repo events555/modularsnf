@@ -236,3 +236,40 @@ class BandReduction:
             V_final = [row[:n] for row in V_accum[:n]]
 
             return A_prime, U_final, V_final
+    
+    def bidiagonalize(self, A):
+        """
+        Implements Corollary 7.5.
+        Iteratively applies BandReduction until the matrix is 2-banded (Upper Bi-diagonal).
+        
+        Input: Upper Triangular Matrix A (or any matrix, but usually triangular per Cor 7.5)
+        Output: B (Upper 2-banded), U, V such that B = U * A * V
+        """
+        n = len(A)
+        current_A = [list(row) for row in A]
+        
+        # Initialize Global Transforms
+        U_total = self.ops.identity(n)
+        V_total = self.ops.identity(n)
+        
+        # Determine initial bandwidth b
+        # (You can perform a quick scan or just assume n for worst case)
+        b = n 
+        
+        while b > 2:
+            # Apply one pass of reduction
+            # Output A_next is floor(b/2) + 1 banded
+            A_next, U_step, V_step = self.reduce(current_A, b)
+            
+            # Update Globals
+            # U_total = U_step * U_total (Left multiply)
+            U_total = self.ops.mat_mul(U_step, U_total)
+            
+            # V_total = V_total * V_step (Right multiply)
+            V_total = self.ops.mat_mul(V_total, V_step)
+            
+            # Prepare for next iteration
+            current_A = A_next
+            b = (b // 2) + 1
+            
+        return current_A, U_total, V_total
