@@ -1,4 +1,4 @@
-from .bandreduction import BandReduction
+from .band_reduction import BandReduction
 from .matrix import MatrixOps
 from .ring import RingZModN
 

@@ -2,7 +2,7 @@ import pytest
 import copy
 import random
 from modularsnf.ring import RingZModN
-from modularsnf.bandreduction import BandReduction
+from modularsnf.band_reduction import BandReduction
 from modularsnf.matrix import MatrixOps
 from .helpers import get_det_mod_n, is_unit, is_echelon, is_bidiagonal
 
