@@ -94,3 +94,60 @@ class MatrixOps:
                 r += 1
                 
         return U, T
+    
+    def pad_matrix(self, A, pad_size):
+        """
+        Augments matrix A with `pad_size` rows and columns of zeros.
+        Essential for BandReduction to handle boundary conditions without 
+        index-out-of-bounds errors.
+        """
+        if pad_size <= 0:
+            return [list(row) for row in A]  # Return copy if no padding
+
+        rows = len(A)
+        cols = len(A[0])
+        new_rows = rows + pad_size
+        new_cols = cols + pad_size
+
+        # Create new zero matrix of augmented size
+        # Assuming ring zero is integer 0
+        B = [[0 for _ in range(new_cols)] for _ in range(new_rows)]
+
+        # Copy original A into top-left
+        for r in range(rows):
+            for c in range(cols):
+                B[r][c] = A[r][c]
+        
+        return B
+
+    def embed_block(self, big_mat, small_block, r_offset, c_offset):
+        """
+        Writes a small block into a larger matrix at position (r_offset, c_offset).
+        Operates in-place on big_mat.
+        """
+        rows = len(small_block)
+        cols = len(small_block[0])
+        
+        # Bounds check (optional but recommended for debug)
+        if r_offset + rows > len(big_mat) or c_offset + cols > len(big_mat[0]):
+            raise IndexError(f"Block embed out of bounds: Big({len(big_mat)}x{len(big_mat[0])}), Small({rows}x{cols}) at ({r_offset},{c_offset})")
+
+        for r in range(rows):
+            for c in range(cols):
+                big_mat[r + r_offset][c + c_offset] = small_block[r][c]
+
+    def embed_identity(self, n, small_block, r_offset, c_offset):
+        """
+        Creates an n x n Identity matrix, but with a sub-block overwritten 
+        by `small_block` at (r_offset, c_offset).
+        
+        Used to lift a local transform (like from triang/shift) into a 
+        global transform that acts on the whole matrix.
+        """
+        # 1. Start with Global Identity
+        I = self.identity(n)
+        
+        # 2. Overwrite the specific region with the local transform
+        self.embed_block(I, small_block, r_offset, c_offset)
+        
+        return I
