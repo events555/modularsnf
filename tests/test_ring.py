@@ -1,28 +1,13 @@
 import pytest
 import random
-from math import gcd as int_gcd
 from modularsnf.ring import RingZModN
+from .helpers import is_unit, gcd_chain
 
 @pytest.fixture
 def ring():
     # Z/12 is chosen because it has zero divisors (2, 3, 4, 6, 8, 10)
     # providing a robust test for a Principal Ideal Ring (PIR).
     return RingZModN(12)
-
-def is_unit(val, ring):
-    """Checks if val is a unit in Z/N."""
-    a, b = val, ring.N
-    while b:
-        a, b = b, a % b
-    return a == 1
-
-
-def gcd_chain(*values):
-    """Computes gcd over multiple integers using Python's math.gcd."""
-    result = 0
-    for val in values:
-        result = int_gcd(result, val)
-    return result
 
 def test_gcdex_fundamental_identity(ring):
     """

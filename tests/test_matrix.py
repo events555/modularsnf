@@ -2,62 +2,13 @@ import pytest
 import random
 from modularsnf.ring import RingZModN
 from modularsnf.matrix import MatrixOps
+from .helpers import get_det, is_unit, verify_echelon_structure
 
 @pytest.fixture
 def components():
     ring = RingZModN(12)
     ops = MatrixOps(ring)
     return ring, ops
-
-# --- Helpers ---
-def get_det(matrix, ring):
-    """Recursive determinant for validation."""
-    n = len(matrix)
-    if n == 1: return matrix[0][0]
-    det = 0
-    for c in range(n):
-        if matrix[0][c] == 0: continue
-        sub = [row[:c] + row[c+1:] for row in matrix[1:]]
-        term = ring.mul(matrix[0][c], get_det(sub, ring))
-        det = ring.sub(det, term) if c % 2 else ring.add(det, term)
-    return det
-
-def is_unit(val, ring):
-    a, b = val, ring.N
-    while b: a, b = b, a % b
-    return a == 1
-
-def verify_echelon_structure(T):
-    """
-    Verifies property (r1) from Chapter 3.
-    '0 = j0 < j1 < j2 ... < jr' (strictly increasing column indices)
-    """
-    rows, cols = len(T), len(T[0])
-    last_pivot_col = -1
-    
-    for r in range(rows):
-        # Find first nonzero entry in this row
-        pivot_col = -1
-        for c in range(cols):
-            if T[r][c] != 0:
-                pivot_col = c
-                break
-        
-        if pivot_col == -1:
-            # All zero row.
-            # Ensure all subsequent rows are also zero (standard echelon definition)
-            # Though  implies strictly increasing indices for nonzero rows only.
-            # We just need to ensure we don't find a nonzero row *after* this.
-            for r2 in range(r + 1, rows):
-                for c2 in range(cols):
-                    assert T[r2][c2] == 0, "Nonzero row found after zero row in Echelon form."
-            break
-        else:
-            # Nonzero row. Must be strictly to the right of the previous pivot.
-            assert pivot_col > last_pivot_col, \
-                f"Pivots not strictly increasing. Row {r} pivot at {pivot_col}, previous at {last_pivot_col}"
-            last_pivot_col = pivot_col
-    return True
 
 # --- Tests ---
 
