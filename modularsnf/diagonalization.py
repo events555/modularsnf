@@ -48,66 +48,45 @@ class DiagonalReduction:
     def merge_blocks(self, A, B):
         """
         Implements Theorem 7.11.
-        Merges two diagonal matrices A and B (already in Smith Form)
-        into a single Smith Form matrix.
-        
-        Input: A (n/2 x n/2), B (n/2 x n/2) diagonal matrices.
-        Output: S (n x n diagonal), U, V (n x n)
         """
         n_a = len(A)
         n_b = len(B)
         n = n_a + n_b
         
+        # Base Case for Empty (Prevents infinite recursion from size=0 splits)
+        if n == 0:
+            return [], [], []
+
         # Base Case: 1x1 matrices (Scalars)
         if n_a == 1 and n_b == 1:
             a = A[0][0]
             b = B[0][0]
             U_local, V_local = self.scalar_merge(a, b)
             
-            # Calculate result S locally to return
-            # S = U * diag * V
             D = self.ops.create_diagonal([a, b])
             UD = self.ops.mat_mul(U_local, D)
             S = self.ops.mat_mul(UD, V_local)
-            
             return S, U_local, V_local
 
         # Recursive Step
-        # Split A and B into halves
-        t = n_a // 2 # Assuming power of 2 for now per paper, but we handle general indices via slicing
+        t = n_a // 2 
         
-        A1 = [row[:t] for row in A[:t]]
-        A2 = [row[t:] for row in A[t:]]
-        B1 = [row[:t] for row in B[:t]]
-        B2 = [row[t:] for row in B[t:]]
-        
-        # We maintain the Work Matrix W, initially diag(A, B)
-        # We track global transforms U_total, V_total
+        # Work Matrix
         W = self.ops.create_diagonal([A[i][i] for i in range(n_a)] + [B[i][i] for i in range(n_b)])
         U_total = self.ops.identity(n)
         V_total = self.ops.identity(n)
 
-        # The 5-Step Merge Procedure
-        # We define a helper to apply a merge on specific block indices
-        
         def apply_sub_merge(blk1_idx, blk2_idx, size):
-            """
-            Merges block at index blk1_idx with block at blk2_idx.
-            Each block is of 'size' x 'size'.
-            """
+            # [FIX] Guard against zero-size merges
+            if size == 0:
+                return
+
             nonlocal W, U_total, V_total
-            
-            # Extract the two diagonal blocks
-            # Note: We only need the diagonal entries to recurse
-            # W is diagonal (mostly), but permutation steps might mess that up?
-            # Actually, the paper says "work matrix satisfies...". 
-            # The transforms U, V make it diagonal again? 
-            # Definition 7.9 says result A', B' are in Smith Form (so diagonal).
             
             start1 = blk1_idx * size
             start2 = blk2_idx * size
             
-            # Construct temporary D1, D2 for recursion
+            # Extract diagonals
             D1 = [[0]*size for _ in range(size)]
             D2 = [[0]*size for _ in range(size)]
             for k in range(size):
@@ -117,25 +96,15 @@ class DiagonalReduction:
             # RECURSIVE CALL
             S_sub, U_sub, V_sub = self.merge_blocks(D1, D2)
             
-            # Update W (The diagonal entries)
+            # Update W
             for k in range(size):
-                # The first half of S_sub goes to block 1
                 W[start1+k][start1+k] = S_sub[k][k]
-                # The second half goes to block 2
                 W[start2+k][start2+k] = S_sub[size+k][size+k]
 
-            # Embed U_sub, V_sub into U_total, V_total
-            # U_sub is 2*size x 2*size. It affects rows start1..+size AND start2..+size
-            # We can't use simple embed_block because the rows might be disjoint in the global matrix!
-            # If blk1 and blk2 are adjacent, it's one block. 
-            # If not (e.g. A2 and B1), we need a "scattered" embedding.
-            
+            # Embed Transforms
             U_lifted = self.ops.identity(n)
             V_lifted = self.ops.identity(n)
             
-            # Map local 2*size indices to global indices
-            # local 0..size-1 -> global start1..start1+size-1
-            # local size..2*size-1 -> global start2..start2+size-1
             indices = [start1 + k for k in range(size)] + [start2 + k for k in range(size)]
             
             for r_local in range(2*size):
@@ -145,32 +114,15 @@ class DiagonalReduction:
                     U_lifted[r_global][c_global] = U_sub[r_local][c_local]
                     V_lifted[r_global][c_global] = V_sub[r_local][c_local]
             
-            U_total = self.ops.mat_mul(U_lifted, U_total) # Left mult
-            V_total = self.ops.mat_mul(V_total, V_lifted) # Right mult
+            U_total = self.ops.mat_mul(U_lifted, U_total)
+            V_total = self.ops.mat_mul(V_total, V_lifted)
 
-        # Execute the 5 steps
-        # Indices: A1=0, A2=1, B1=2, B2=3
-        # Block size is t.
-        
-        # Step 1: Merge (A1, B1)
+        # Execute 5 steps
+        # If t=0, these will simply return immediately, preventing the loop.
         apply_sub_merge(0, 2, t)
-        
-        # Step 2: Merge (A2, B2)
         apply_sub_merge(1, 3, t)
-        
-        # Step 3: Merge (A2, B1)
         apply_sub_merge(1, 2, t)
-        
-        # Step 4: Merge (B1, B2)
         apply_sub_merge(2, 3, t)
-        
-        # Step 5: Permutation
-        # "If B1 has trailing zero diagonal entries... apply permutation"
-        # We just need to sort the diagonal of W to ensure zeros are at the end
-        # if the merge steps didn't strictly enforce strict ordering for zeros.
-        # For strict Smith form, divisibility implies zeros are at the end.
-        # We can implement a final "Sort Diagonal" pass if needed, 
-        # or assume the property holds via the logic A < B.
         
         return W, U_total, V_total
 
