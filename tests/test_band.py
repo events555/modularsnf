@@ -85,7 +85,7 @@ def setup_components():
 
 def test_lemma_3_1_compliance(setup_components):
     """
-    [cite_start]Strictly validates the requirements of Lemma 3.1[cite: 836].
+    Strictly validates the requirements of Lemma 3.1.
     Input: Matrix A
     Output: Unimodular U, Echelon T
     Relation: UA = T
@@ -116,7 +116,7 @@ def test_lemma_3_1_compliance(setup_components):
 
 def test_triang_lemma_7_3(setup_components):
     """
-    [cite_start]Validates Lemma 7.3[cite: 1188].
+    Validates Lemma 7.3.
     Transforms an upper b-banded matrix B to B'.
     Focus is on the sub-block B2 (rows 0..s1-1, cols s1..n1-1).
     """
@@ -146,7 +146,7 @@ def test_triang_lemma_7_3(setup_components):
     assert BV == B_prime, "Transform mismatch B' != B * V"
     
     # 3. Verify Structure of B'
-    # [cite_start]According to diagram in[cite: 1173], the "corner" of B2 should be cleared.
+    # According to diagram in, the "corner" of B2 should be cleared.
     # Specifically, we performed column operations to triangularize B2^T.
     # This means B2 (in B') should be Lower Triangular.
     
@@ -162,50 +162,43 @@ def test_triang_lemma_7_3(setup_components):
 
 def test_shift_lemma_7_4(setup_components):
     """
-    [cite_start]Validates Lemma 7.4[cite: 1198].
+    Validates Lemma 7.4.
     Transforms C to C' via Left and Right transforms.
     """
     ring, reducer, ops = setup_components
-    
+
     # Dimensions
     s2 = 2
     # C is n2 x n2. n2 = 4.
     C = [
-        [1, 2, 3, 4], # C1 | C2
-        [0, 5, 6, 7], #    |
+        [0, 1, 3, 4], # C1 | C2
+        [1, 0, 6, 7], #    |
         [0, 0, 1, 2], # 0  | C3
         [0, 0, 0, 5]
     ]
-    
+
     C_prime, U, V = reducer.shift(C, s2)
-    
+
     # 1. Verify Unimodularity
     assert is_unit(get_det_mod_n(U, ring), ring), "U is not unimodular"
     assert is_unit(get_det_mod_n(V, ring), ring), "V is not unimodular"
-    
-    # [cite_start]2. Verify Transformation C' = U * C * V [cite: 1223]
-    # Note: The code returns U, V such that C' = U * C * V ?
-    # Or does it return the accumulated transforms?
-    # Checking the logic in bandreduction.py:
-    # C_step1 = U_full * C
-    # C_prime = C_step1 * V_full
-    # So C' = U * C * V. Correct.
-    
+
+    # 2. Verify Transformation C' = U * C * V
     UC = ops.mat_mul(U, C)
     UCV = ops.mat_mul(UC, V)
     assert UCV == C_prime, "Transform mismatch C' != U * C * V"
-    
-    # [cite_start]3. Verify Structure [cite: 1213]
-    # The diagram implies the "band" moves.
-    # C1 (top left) was Upper Triangular.
-    # We applied U (from left) derived from C1's column structure...
-    # The result C' should have zeros "pushed" in specific areas.
-    # Specifically, C1 in C' should be Upper Triangular (because we reduced it).
-    # Let's check C1's structure in C_prime.
+
+    # 3. Verify Structure
+    # The Shift algorithm ensures C1 becomes Upper Triangular (via U)
+    # and (U*C2)*V becomes Lower Triangular.
     
     C1_prime = [row[:s2] for row in C_prime[:s2]]
-    
-    # Due to the specific transformations in Lemma 7.4:
-    # 1. U triangularizes C1^T (Column ops on C1).
-    # If we verify structural changes, we ensure the algorithm did *something*.
-    assert C1_prime != [row[:s2] for row in C[:s2]], "C1 block should have changed"
+
+    # Check 1: Did C1 change? (It should, because input was [[0,1],[1,0]])
+    C1_original = [row[:s2] for row in C[:s2]]
+    assert C1_prime != C1_original, "C1 block should have changed"
+
+    # Check 2: Is C1_prime Upper Triangular?
+    # The algorithm applies U such that U*C1 is Upper Triangular.
+    # For a 2x2, this means the bottom-left entry must be 0.
+    assert C1_prime[1][0] == 0, "C1 block should be Upper Triangular after shift"
