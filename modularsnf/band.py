@@ -1,3 +1,9 @@
+"""Band reduction transforms for Storjohann's block algorithms.
+
+Provides helpers for triang and shift steps that manipulate banded blocks to
+support Smith normal form reduction over modular rings.
+"""
+
 from typing import Tuple
 from modularsnf.ring import RingZModN
 from modularsnf.matrix import RingMatrix

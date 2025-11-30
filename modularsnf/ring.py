@@ -1,3 +1,9 @@
+"""Modular arithmetic helpers for Z/NZ used across Smith normal form.
+
+Provides the ``RingZModN`` abstraction with arithmetic, ideal, and gcd tools
+needed by the Smith normal form algorithms implemented in this package.
+"""
+
 import math
 
 class RingZModN:
