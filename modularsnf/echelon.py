@@ -57,8 +57,7 @@ def index1_reduce_on_columns(A: RingMatrix, k: int) -> Tuple[RingMatrix, RingMat
             if ring.is_zero(x):
                 continue
             phi = (-ring.quo(x, sj)) % ring.N
-            for col in range(T.ncols):
-                T.data[i][col] = ring.add(T.data[i][col], ring.mul(phi, T.data[j][col]))
-            for col in range(U.ncols):
-                U.data[i][col] = ring.add(U.data[i][col], ring.mul(phi, U.data[j][col]))
+            # vectorized row updates
+            T.data[i, :] = (T.data[i, :] + phi * T.data[j, :]) % ring.N
+            U.data[i, :] = (U.data[i, :] + phi * U.data[j, :]) % ring.N
     return U, T
