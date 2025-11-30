@@ -1,163 +1,192 @@
-import copy
+from dataclasses import dataclass
+from typing import List, Tuple
 
-class MatrixOps:
-    def __init__(self, ring):
-        self.ring = ring
+from modularsnf.ring import RingZModN
 
-    def mat_mul(self, A, B):
-        rows_A = len(A)
-        cols_A = len(A[0])
-        rows_B = len(B)
-        cols_B = len(B[0])
-        
-        if cols_A != rows_B:
-            raise ValueError("Dimension mismatch")
-            
-        C = [[0 for _ in range(cols_B)] for _ in range(rows_A)]
-        for i in range(rows_A):
-            for j in range(cols_B):
-                sum_val = 0
-                for k in range(cols_A):
-                    sum_val = self.ring.add(sum_val, self.ring.mul(A[i][k], B[k][j]))
-                C[i][j] = sum_val
-        return C
+@dataclass
+class RingMatrix:
+    ring: RingZModN
+    data: List[List[int]]
 
-    def identity(self, n):
-        return [[1 if i == j else 0 for j in range(n)] for i in range(n)]
+    def __post_init__(self):
+        if not self.data:
+            return
+        ncols = len(self.data[0])
+        for row in self.data:
+            if len(row) != ncols:
+                raise ValueError("All rows must have the same length")
+        N = self.ring.N
+        self.data = [[x % N for x in row] for row in self.data]
 
-    def transpose(self, A):
-        return [list(row) for row in zip(*A)]
+    @property
+    def nrows(self) -> int:
+        return len(self.data)
 
-    def lemma_3_1_transform(self, A):
+    @property
+    def ncols(self) -> int:
+        return len(self.data[0]) if self.data else 0
+
+    @property
+    def shape(self) -> Tuple[int, int]:
+        return self.nrows, self.ncols
+
+    @classmethod
+    def from_rows(cls, ring: RingZModN, rows: List[List[int]]) -> "RingMatrix":
+        return cls(ring=ring, data=rows)
+
+    @classmethod
+    def identity(cls, ring: RingZModN, n: int) -> "RingMatrix":
+        rows = [[1 if i == j else 0 for j in range(n)] for i in range(n)]
+        return cls(ring, rows)
+
+    @classmethod
+    def diagonal(cls, ring: RingZModN, diag: List[int]) -> "RingMatrix":
+        n = len(diag)
+        rows = [[0]*n for _ in range(n)]
+        for i, v in enumerate(diag):
+            rows[i][i] = v
+        return cls(ring, rows)
+
+    @classmethod
+    def block_diag(cls, A: "RingMatrix", B: "RingMatrix") -> "RingMatrix":
         """
-        Implements Lemma 3.1.
-        Input: Matrix A (n x m).
-        Output: (U, T) where U is unimodular, T is echelon, and UA = T.
-        
-        Note: The paper describes a recursive block breakdown (Fig 3.1).
-        For the purpose of verifying the math of Triang/Shift first,
-        we implement the iterative version described in code fragment
-        which is O(nmr) but functional for unit verification.
+        Block-diagonal composition:
+            [ A  0 ]
+            [ 0  B ]
+
+        A and B may be rectangular, but must share the same ring.
         """
-        n = len(A)
-        m = len(A[0])
-        U = self.identity(n)
-        T = copy.deepcopy(A)
-        
-        # Implementing the iterative approach from Chapter 3 intro for stability
-        r = 0 # current pivot row index (0-based)
-        
-        for k in range(m): # For each column
-            if r >= n: break
-            
-            # We need to eliminate entries below T[r, k]
-            # The paper iterates i from r+1 to n.
-            # However, in a PIR, we use Gcdex to eliminate.
-            
-            # First, ensure the pivot itself gathers the GCD of the column
-            for i in range(r + 1, n):
-                if T[i][k] == 0:
+        if A.ring is not B.ring:
+            raise ValueError("Cannot form block diagonal over different rings")
+        ring = A.ring
+        a_rows, a_cols = A.shape
+        b_rows, b_cols = B.shape
+
+        total_rows = a_rows + b_rows
+        total_cols = a_cols + b_cols
+
+        zero = 0
+        data = [[zero for _ in range(total_cols)] for _ in range(total_rows)]
+
+        # top-left: A
+        for i in range(a_rows):
+            for j in range(a_cols):
+                data[i][j] = A.data[i][j]
+
+        # bottom-right: B
+        for i in range(b_rows):
+            for j in range(b_cols):
+                data[a_rows + i][a_cols + j] = B.data[i][j]
+
+        return cls(ring, data)
+
+    def copy(self) -> "RingMatrix":
+        return RingMatrix(self.ring, [row[:] for row in self.data])
+
+    def transpose(self) -> "RingMatrix":
+        t = list(zip(*self.data))
+        return RingMatrix(self.ring, [list(row) for row in t])
+
+    def __matmul__(self, other: "RingMatrix") -> "RingMatrix":
+        if self.ring is not other.ring:
+            raise ValueError("Cannot multiply matrices over different rings")
+
+        rA = len(self.data)
+        cA = len(self.data[0]) if rA else 0
+        rB = len(other.data)
+        cB = len(other.data[0]) if rB else 0
+
+        if cA != rB:
+            raise ValueError(f"Dimension mismatch: {cA} != {rB}")
+
+        ring = self.ring
+        N = ring.N
+
+        A = self.data
+        B = other.data
+
+        # Pre-allocate result
+        C = [[0] * cB for _ in range(rA)]
+
+        for i in range(rA):
+            Ai = A[i]
+            Ci = C[i]
+            for k in range(cA):
+                aik = Ai[k]
+                if aik == 0:
                     continue
-                
-                # Apply Gcdex to T[r, k] and T[i, k]
-                g, s, t, u, v = self.ring.gcdex(T[r][k], T[i][k])
-                
-                # Construct the 2x2 transform block
-                # [[s, t], [u, v]]
-                
-                # Update T (Apply to rows r and i)
-                # We optimize by only updating relevant rows
-                row_r = T[r]
-                row_i = T[i]
-                
-                new_row_r = [self.ring.add(self.ring.mul(s, x), self.ring.mul(t, y)) 
-                             for x, y in zip(row_r, row_i)]
-                new_row_i = [self.ring.add(self.ring.mul(u, x), self.ring.mul(v, y)) 
-                             for x, y in zip(row_r, row_i)]
-                
-                T[r] = new_row_r
-                T[i] = new_row_i
-                
-                # Update U (Apply to rows r and i of U) to track the transform
-                row_Ur = U[r]
-                row_Ui = U[i]
-                
-                new_row_Ur = [self.ring.add(self.ring.mul(s, x), self.ring.mul(t, y)) 
-                              for x, y in zip(row_Ur, row_Ui)]
-                new_row_Ui = [self.ring.add(self.ring.mul(u, x), self.ring.mul(v, y)) 
-                              for x, y in zip(row_Ur, row_Ui)]
-                
-                U[r] = new_row_Ur
-                U[i] = new_row_Ui
+                Bk = B[k]
+                for j in range(cB):
+                    Ci[j] += aik * Bk[j]
+            for j in range(cB):
+                Ci[j] %= N
 
-            if T[r][k] != 0:
-                r += 1
-                
-        return U, T
-    
-    def pad_matrix(self, A, pad_size):
-        """
-        Augments matrix A with `pad_size` rows and columns of zeros.
-        Essential for BandReduction to handle boundary conditions without 
-        index-out-of-bounds errors.
-        """
-        if pad_size <= 0:
-            return [list(row) for row in A]  # Return copy if no padding
+        return RingMatrix(ring, C)
 
-        rows = len(A)
-        cols = len(A[0])
-        new_rows = rows + pad_size
-        new_cols = cols + pad_size
-
-        # Create new zero matrix of augmented size
-        # Assuming ring zero is integer 0
-        B = [[0 for _ in range(new_cols)] for _ in range(new_rows)]
-
-        # Copy original A into top-left
+    def pad_to(self, target_rows: int, target_cols: int) -> "RingMatrix":
+        rows, cols = self.shape
+        if rows == target_rows and cols == target_cols:
+            return self.copy()
+        N = self.ring.N
+        new = [[0]*target_cols for _ in range(target_rows)]
         for r in range(rows):
             for c in range(cols):
-                B[r][c] = A[r][c]
-        
-        return B
+                new[r][c] = self.data[r][c] % N
+        return RingMatrix(self.ring, new)
 
-    def embed_block(self, big_mat, small_block, r_offset, c_offset):
-        """
-        Writes a small block into a larger matrix at position (r_offset, c_offset).
-        Operates in-place on big_mat.
-        """
-        rows = len(small_block)
-        cols = len(small_block[0])
-        
-        # Bounds check (optional but recommended for debug)
-        if r_offset + rows > len(big_mat) or c_offset + cols > len(big_mat[0]):
-            raise IndexError(f"Block embed out of bounds: Big({len(big_mat)}x{len(big_mat[0])}), Small({rows}x{cols}) at ({r_offset},{c_offset})")
-
-        for r in range(rows):
-            for c in range(cols):
-                big_mat[r + r_offset][c + c_offset] = small_block[r][c]
-
-    def embed_identity(self, n, small_block, r_offset, c_offset):
-        """
-        Creates an n x n Identity matrix, but with a sub-block overwritten 
-        by `small_block` at (r_offset, c_offset).
-        
-        Used to lift a local transform (like from triang/shift) into a 
-        global transform that acts on the whole matrix.
-        """
-        # 1. Start with Global Identity
-        I = self.identity(n)
-        
-        # 2. Overwrite the specific region with the local transform
-        self.embed_block(I, small_block, r_offset, c_offset)
-        
-        return I
+    def pad_to_square_power2(self) -> "RingMatrix":
+        n = max(self.nrows, self.ncols)
+        if n <= 0:
+            return self.copy()
+        size = 1 << (n - 1).bit_length()
+        return self.pad_to(size, size)
     
-    def create_diagonal(self, entries):
+    def submatrix(self, row_start: int, row_end: int,
+                  col_start: int, col_end: int) -> "RingMatrix":
         """
-        Creates a diagonal matrix from a list of entries.
+        Return a view copy of rows [row_start:row_end) and
+        cols [col_start:col_end).
         """
-        n = len(entries)
-        D = [[0]*n for _ in range(n)]
-        for i in range(n):
-            D[i][i] = entries[i]
-        return D
+        rows = [
+            row[col_start:col_end]
+            for row in self.data[row_start:row_end]
+        ]
+        return RingMatrix(self.ring, rows)
+
+    def write_block(self, row_start: int, col_start: int,
+                    block: "RingMatrix") -> None:
+        """
+        Overwrite a sub-block of self starting at (row_start, col_start)
+        with the contents of 'block'. Rings must match.
+        """
+        if self.ring is not block.ring:
+            raise ValueError("Cannot write block with different ring")
+        b_rows, b_cols = block.shape
+        for i in range(b_rows):
+            for j in range(b_cols):
+                self.data[row_start + i][col_start + j] = block.data[i][j]
+
+
+    def apply_row_2x2(self, r: int, i: int, s: int, t: int, u: int, v: int) -> None:
+        """In-place:  [row_r; row_i] <- [s t; u v] [row_r; row_i]."""
+        ring = self.ring
+        row_r = self.data[r]
+        row_i = self.data[i]
+        new_r = [
+            ring.add(ring.mul(s, x), ring.mul(t, y))
+            for x, y in zip(row_r, row_i)
+        ]
+        new_i = [
+            ring.add(ring.mul(u, x), ring.mul(v, y))
+            for x, y in zip(row_r, row_i)
+        ]
+        self.data[r] = new_r
+        self.data[i] = new_i
+
+    def to_sympy(self):
+        import sympy as sp
+        return sp.Matrix(self.data)
+
+    def pprint(self):
+        from sympy import pprint
+        pprint(self.to_sympy())

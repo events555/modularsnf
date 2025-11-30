@@ -1,143 +1,109 @@
-"""Shared testing helpers for modularsnf test suite."""
-from math import gcd as math_gcd
+import math
+from modularsnf.matrix import RingMatrix
+from itertools import product
 
 
-def gcd_chain(*values):
-    """Computes the gcd across an arbitrary list of integers."""
-    result = 0
-    for val in values:
-        result = math_gcd(result, int(val))
-    return abs(result)
+def det_ring_matrix(M: RingMatrix) -> int:
+    """
+    Naive determinant for small square matrices over RingZModN.
+    Returns an integer representative (mod N is implied by the ring).
+    """
+    ring = M.ring
+    data = M.data
+    n = M.nrows
+    assert n == M.ncols
 
-
-def is_unit(val, ring):
-    """Checks if val is a unit in Z/N by verifying gcd(val, N) == 1."""
-    return gcd_chain(val, ring.N) == 1
-
-
-def _det_recursive(matrix, ring):
-    """Recursive determinant helper that operates using the provided ring."""
-    n = len(matrix)
     if n == 1:
-        return matrix[0][0]
+        return data[0][0] % ring.N
+    if n == 2:
+        a, b = data[0]
+        c, d = data[1]
+        ad = ring.mul(a, d)
+        bc = ring.mul(b, c)
+        return ring.sub(ad, bc)
 
     det = 0
-    for c in range(n):
-        element = matrix[0][c]
-        if element == 0:
-            continue
-
-        sub_matrix = [row[:c] + row[c + 1 :] for row in matrix[1:]]
-        sub_det = _det_recursive(sub_matrix, ring)
-        term = ring.mul(element, sub_det)
-
-        if c % 2 == 1:
-            det = ring.sub(det, term)
-        else:
+    for j in range(n):
+        sub_rows = [
+            row[:j] + row[j+1:]
+            for row in data[1:]
+        ]
+        subM = RingMatrix(ring, sub_rows)
+        sub_det = det_ring_matrix(subM)
+        term = ring.mul(data[0][j], sub_det)
+        if j % 2 == 0:
             det = ring.add(det, term)
-
+        else:
+            det = ring.sub(det, term)
     return det
 
-
-def get_det(matrix, ring):
-    """Public wrapper exposing the determinant helper (alias for mod-N tests)."""
-    return _det_recursive(matrix, ring)
-
-
-def get_det_mod_n(matrix, ring):
-    """Compatibility alias for existing tests that expect mod-N determinant."""
-    return _det_recursive(matrix, ring)
-
-
-def verify_echelon_structure(T):
-    """Checks that pivot indices strictly increase row by row."""
-    rows, cols = len(T), len(T[0])
+def verify_echelon_structure(T: RingMatrix) -> bool:
+    """
+    Check:
+    - For each non-zero row, the first non-zero column index strictly increases.
+    - Once a zero row appears, all later rows are zero.
+    """
+    ring = T.ring
+    nrows, ncols = T.nrows, T.ncols
     last_pivot_col = -1
+    zero_row_seen = False
 
-    for r in range(rows):
+    for r in range(nrows):
+        row = T.data[r]
+        # find first non-zero entry in this row
         pivot_col = -1
-        for c in range(cols):
-            if T[r][c] != 0:
+        for c in range(ncols):
+            if not ring.is_zero(row[c]):
                 pivot_col = c
                 break
 
         if pivot_col == -1:
-            for r2 in range(r + 1, rows):
-                for c2 in range(cols):
-                    assert T[r2][c2] == 0, "Nonzero row found after zero row in echelon form"
-            break
+            # zero row
+            zero_row_seen = True
+            # all subsequent rows must be zero
+            if any(not all(ring.is_zero(x) for x in T.data[rr]) for rr in range(r+1, nrows)):
+                return False
         else:
-            assert pivot_col > last_pivot_col, (
-                f"Pivots not strictly increasing. Row {r} pivot at {pivot_col}, prev at {last_pivot_col}"
-            )
+            # non-zero row; we must not have seen a zero row before
+            if zero_row_seen:
+                return False
+            if pivot_col <= last_pivot_col:
+                return False
             last_pivot_col = pivot_col
 
     return True
 
+def row_span(M: RingMatrix) -> set[tuple[int, ...]]:
+    """
+    Compute the full row span of M over Z/NZ by brute force.
+    Only for small matrices (e.g., r <= 3) in tests.
+    """
+    ring = M.ring
+    N = ring.N
+    r, c = M.nrows, M.ncols
+    rows = M.data
 
-def is_echelon(A):
-    """Verifies that pivot indices strictly increase (row-echelon)."""
-    rows = len(A)
-    cols = len(A[0])
-    last_pivot = -1
-
-    for r in range(rows):
-        current_pivot = -1
-        for c in range(cols):
-            if A[r][c] != 0:
-                current_pivot = c
-                break
-
-        if current_pivot == -1:
-            continue
-
-        if current_pivot <= last_pivot:
-            return False
-        last_pivot = current_pivot
-
-    return True
-
-
-def is_bidiagonal(A):
-    """Checks whether a matrix is upper bi-diagonal (non-zero on diag and super-diagonal)."""
-    rows = len(A)
-    cols = len(A[0])
-
-    for r in range(rows):
-        for c in range(cols):
-            if c == r or c == r + 1:
+    span = set()
+    for coeffs in product(range(N), repeat=r):
+        vec = [0] * c
+        for i, alpha in enumerate(coeffs):
+            if alpha == 0:
                 continue
-            if A[r][c] != 0:
-                return False
-    return True
+            row = rows[i]
+            vec = [
+                ring.add(v, ring.mul(alpha, row[j]))
+                for j, v in enumerate(vec)
+            ]
+        span.add(tuple(x % N for x in vec))
+    return span
 
-
-def is_divisible(a, b, ring):
-    """Checks if b lies in the ideal generated by a (i.e., a divides b in Z/N)."""
-    for x in range(ring.N):
-        if ring.mul(a, x) == b:
-            return True
-    return False
-
-
-def is_associate(a, b, ring):
-    """Returns True if a and b generate the same principal ideal (a | b and b | a)."""
-    return is_divisible(a, b, ring) and is_divisible(b, a, ring)
-
-
-def verify_smith_form_properties(S, ring):
-    """Validates that S is diagonal and satisfies the divisibility chain for Smith form."""
-    rows = len(S)
-    cols = len(S[0])
-
-    for r in range(rows):
-        for c in range(cols):
-            if r != c and S[r][c] != 0:
-                return False, f"Not diagonal at ({r},{c})"
-
-    diag = [S[i][i] for i in range(min(rows, cols))]
-    for i in range(len(diag) - 1):
-        if not is_divisible(diag[i], diag[i + 1], ring):
-            return False, f"Divisibility failed at index {i}: {diag[i]} does not divide {diag[i + 1]}"
-
-    return True, ""
+def get_normalized_invariants(M: RingMatrix) -> list[int]:
+    """
+    Extracts diagonal entries and normalizes them to ideal generators.
+    invariant = gcd(d_i, N).
+    """
+    n = min(M.nrows, M.ncols)
+    diags = [M.data[i][i] for i in range(n)]
+    invariants = [math.gcd(d, M.ring.N) for d in diags]
+    invariants.sort()
+    return invariants

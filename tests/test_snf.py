@@ -1,86 +1,179 @@
-import pytest
+import math
 import random
+import pytest
+
+# Try importing SymPy for ground truth verification
+try:
+    from sympy import Matrix, ZZ
+    from sympy.matrices.normalforms import smith_normal_form
+    SYMPY_AVAILABLE = True
+except ImportError:
+    SYMPY_AVAILABLE = False
+
 from modularsnf.ring import RingZModN
-from modularsnf.snf import BidiagonalToSmith
-from modularsnf.matrix import MatrixOps
-from modularsnf.band_reduction import BandReduction
-from .helpers import verify_smith_form_properties
+from modularsnf.matrix import RingMatrix
+from modularsnf.snf import smith_normal_form as compute_snf
+from tests.helpers import det_ring_matrix, get_normalized_invariants
 
-# Reuse helpers from previous tests (is_unit, verify_smith_form_properties, etc.)
-# ...
+# --- Test Configuration ---
+RINGS_TO_TEST = [2, 4, 6, 9, 12, 100]
+DIMENSIONS = [
+    (4, 4),   # Square
+    (4, 6),   # Fat
+    (6, 4),   # Tall
+    (5, 1)    # Vector column
+]
 
-@pytest.fixture
-def components():
-    ring = RingZModN(12)
-    snf = BidiagonalToSmith(ring)
-    ops = MatrixOps(ring)
-    band = BandReduction(ring)
-    return ring, snf, ops, band
+class TestSmithNormalForm:
 
-def test_stab_atomic(components):
-    """Verify the Stab logic from ring.py"""
-    ring, _, _, _ = components
-    # Example: gcd(2 + x*4, 6) = gcd(2, 4, 6) = 2
-    # If x=1: gcd(6, 6) = 6 != 2
-    # If x=2: gcd(10, 6) = 2. Success.
-    x = ring.stab(2, 4, 6)
-    assert ring.gcd(2 + x*4, ring.gcd(6, 12)) == 2
-
-def test_bidiagonal_to_smith(components):
-    """
-    Validates Proposition 7.12.
-    Input: Upper 2-Banded Matrix.
-    Output: Smith Form.
-    """
-    ring, snf, ops, _ = components
-    n = 4
+    @pytest.fixture
+    def random_matrix(self, request):
+        """Fixture to generate random matrices based on params."""
+        N, rows, cols = request.param
+        ring = RingZModN(N)
+        data = [[random.randint(0, N - 1) for _ in range(cols)] for _ in range(rows)]
+        return RingMatrix.from_rows(ring, data)
     
-    # Create a 2-banded matrix
-    A = [[0]*n for _ in range(n)]
-    for i in range(n):
-        A[i][i] = random.randint(0, 11)
-        if i+1 < n:
-            A[i][i+1] = random.randint(0, 11)
+    @pytest.mark.parametrize("random_matrix", [
+        (N, r, c) for N in [6, 12] for r, c in DIMENSIONS
+    ], indirect=True)
+    def test_snf_transform_validity(self, random_matrix):
+        """
+        Verify U * A * V == S.
+        """
+        A = random_matrix
+        U, V, S = compute_snf(A)
+
+        assert U.shape == (A.nrows, A.nrows)
+        assert V.shape == (A.ncols, A.ncols)
+        assert S.shape == A.shape
+
+        LHS = U @ A @ V
+        assert LHS.data == S.data, "Transform mismatch: U @ A @ V != S"
+
+    @pytest.mark.parametrize("random_matrix", [
+        (N, r, c) for N in [6, 12] for r, c in DIMENSIONS
+    ], indirect=True)
+    def test_snf_diagonal_structure(self, random_matrix):
+        """
+        Verify S_ij == 0 for all i != j.
+        """
+        A = random_matrix
+        _, _, S = compute_snf(A)
+        ring = S.ring
+
+        for r in range(S.nrows):
+            for c in range(S.ncols):
+                if r != c:
+                    assert ring.is_zero(S.data[r][c]), \
+                        f"Non-zero off-diagonal at ({r},{c}): {S.data[r][c]}"
+
+    @pytest.mark.parametrize("random_matrix", [
+        (N, 5, 5) for N in [12, 36, 100]
+    ], indirect=True)
+    def test_snf_divisibility_chain(self, random_matrix):
+        """
+        Verify d_i | d_{i+1} in the sense of principal ideals.
+        In Z/N, this means gcd(d_i, N) | gcd(d_{i+1}, N).
+        """
+        A = random_matrix
+        _, _, S = compute_snf(A)
+        
+        invariants = get_normalized_invariants(S)
+        
+        for i in range(len(invariants) - 1):
+            d_curr = invariants[i]
+            d_next = invariants[i+1]
             
-    S, U, V = snf.run(A)
-    
-    # 1. Equivalence
-    UA = ops.mat_mul(U, A)
-    UAV = ops.mat_mul(UA, V)
-    assert UAV == S
-    
-    # 2. Structure
-    # Check diagonal and divisibility
-    is_valid, msg = verify_smith_form_properties(S, ring) # Assuming this helper is imported
-    assert is_valid, msg
+            if d_curr == 0:
+                assert d_next == 0, f"Divisibility break: 0 does not divide {d_next}"
+            else:
+                assert d_next % d_curr == 0, \
+                    f"Divisibility break at index {i}: {d_curr} does not divide {d_next}"
 
-def test_full_pipeline_integration(components):
-    """
-    Tests Arbitrary Matrix -> BandReduce -> SNF
-    """
-    ring, snf, ops, band = components
-    
-    # Arbitrary Matrix
-    A = [
-        [2, 4, 6],
-        [1, 3, 5],
-        [0, 2, 4]
-    ]
-    
-    # Phase 1: Bidiagonalize
-    B, U1, V1 = band.bidiagonalize(A)
-    
-    # Phase 2: SNF
-    S, U2, V2 = snf.run(B)
-    
-    # Combine Transforms
-    # Final = U2 * U1 * A * V1 * V2
-    U_total = ops.mat_mul(U2, U1)
-    V_total = ops.mat_mul(V1, V2)
-    
-    UA = ops.mat_mul(U_total, A)
-    UAV = ops.mat_mul(UA, V_total)
-    
-    assert UAV == S
-    is_valid, msg = verify_smith_form_properties(S, ring)
-    assert is_valid, msg
+
+    @pytest.mark.parametrize("random_matrix", [
+        (N, 4, 4) for N in [6, 9]
+    ], indirect=True)
+    def test_transforms_are_unimodular(self, random_matrix):
+        """
+        Verify det(U) and det(V) are units in Z/N.
+        i.e., gcd(det, N) == 1.
+        """
+        A = random_matrix
+        N = A.ring.N
+        U, V, _ = compute_snf(A)
+
+        det_U = det_ring_matrix(U)
+        det_V = det_ring_matrix(V)
+
+        assert math.gcd(det_U, N) == 1, f"U is not unimodular. det(U)={det_U} (mod {N})"
+        assert math.gcd(det_V, N) == 1, f"V is not unimodular. det(V)={det_V} (mod {N})"
+
+    @pytest.mark.skipif(not SYMPY_AVAILABLE, reason="SymPy not installed")
+    @pytest.mark.parametrize("random_matrix", [
+        (N, r, c) for N in [12, 100] for r, c in [(5, 5), (4, 6)]
+    ], indirect=True)
+    def test_invariants_against_sympy(self, random_matrix):
+        """
+        Compute SNF over Integers (via SymPy) -> Project to Z/N -> Compare Invariants.
+        This verifies that the computed form is actually THE Smith Normal Form.
+        """
+        A_mod = random_matrix
+        N = A_mod.ring.N
+        n_diag = min(A_mod.nrows, A_mod.ncols)
+
+        A_sym = A_mod.to_sympy()
+        S_sym = smith_normal_form(A_sym, domain=ZZ)
+        
+        sym_diags = [S_sym[i, i] for i in range(n_diag)]
+        expected_invariants = [math.gcd(x, N) for x in sym_diags]
+        expected_invariants.sort()
+
+        _, _, S_mod = compute_snf(A_mod)
+        actual_invariants = get_normalized_invariants(S_mod)
+
+        assert actual_invariants == expected_invariants, \
+            f"\nExpected (SymPy): {expected_invariants}\nActual (Ours):   {actual_invariants}"
+
+
+    def test_zero_matrix(self):
+        """Test strict zero matrix."""
+        ring = RingZModN(12)
+        A = RingMatrix.from_rows(ring, [[0, 0], [0, 0]])
+        U, V, S = compute_snf(A)
+        
+        assert S.data == [[0, 0], [0, 0]]
+        assert (U @ A @ V).data == S.data
+
+    def test_identity_matrix(self):
+        """Test already diagonal matrix (identity)."""
+        ring = RingZModN(12)
+        A = RingMatrix.identity(ring, 3)
+        U, V, S = compute_snf(A)
+
+        for i in range(S.nrows):
+            for j in range(S.ncols):
+                if i != j:
+                    assert ring.is_zero(S.data[i][j]), \
+                        f"Non-zero off-diagonal at ({i},{j}): {S.data[i][j]}"
+
+        invariants = get_normalized_invariants(S)
+        assert invariants == [1, 1, 1]
+        
+    def test_already_diagonal_unsorted(self):
+        """
+        Test a diagonal matrix that violates divisibility chain.
+        diag(2, 1) mod 4 -> should become diag(1, 2).
+        """
+        ring = RingZModN(4)
+        A = RingMatrix.diagonal(ring, [2, 1]) 
+        
+        _, _, S = compute_snf(A)
+        
+        diags = [S.data[i][i] for i in range(2)]
+        
+        invariants = get_normalized_invariants(S)
+        assert invariants == [1, 2] 
+        assert (S.data[0][0] == 1 or S.data[0][0] == 3)
+        assert S.data[1][1] == 2
