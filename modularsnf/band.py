@@ -5,19 +5,22 @@ from modularsnf.echelon import lemma_3_1
 
 def triang(B: RingMatrix, b: int) -> Tuple[RingMatrix, RingMatrix]:
     """
-    Lemma 7.3 (Triang) in block form.
+    Triangulates the top-right block of an upper-b-banded matrix.
 
-    Input:
-        B: n1 x n1 upper-b-banded block, where
-           s1 = floor(b/2), s2 = b-1, n1 = s1 + s2.
-        b: bandwidth parameter (b > 2).
+    Args:
+        B: An n1 x n1 upper-b-banded block with s1 = floor(b/2), s2 = b - 1,
+            and n1 = s1 + s2.
+        b: Bandwidth parameter; must satisfy b > 2.
 
-    Output:
-        (B_prime, W) where:
-            - W is s2 x s2 local right transform.
-            - B_prime = B * diag(I_{s1}, W).
-            - The top-right s1 x s2 block of B_prime has the 'triangulated'
-              structure induced by lemma_3_1 on B2^T.
+    Returns:
+        A tuple ``(B_prime, W)`` where ``W`` is the s2 x s2 local right
+        transform such that ``B_prime = B * diag(I_{s1}, W)`` and the
+        top-right s1 x s2 block of ``B_prime`` has the triangulated structure
+        induced by ``lemma_3_1`` on ``B2^T``.
+
+    Raises:
+        ValueError: If ``b <= 2`` or ``B`` is not an n1 x n1 block with
+            ``n1 = s1 + s2``.
     """
     ring: RingZModN = B.ring
     if b <= 2:
@@ -55,28 +58,25 @@ def triang(B: RingMatrix, b: int) -> Tuple[RingMatrix, RingMatrix]:
 
 def shift(C: RingMatrix, b: int) -> Tuple[RingMatrix, RingMatrix, RingMatrix]:
     """
-    Implements Storjohann's Lemma 7.4 (Shift) on a local block.
+    Applies Storjohann's Lemma 7.4 (Shift) to a local block.
 
-    Input:
-        C : n2 x n2 RingMatrix, where
-                s2 = b - 1,
-                n2 = 2 * s2,
-             and C is (conceptually) upper b-banded.
-        b : bandwidth parameter, b > 2.
+    Args:
+        C: An n2 x n2 block with ``s2 = b - 1`` and ``n2 = 2 * s2`` that is
+            conceptually upper b-banded.
+        b: Bandwidth parameter; must satisfy b > 2.
 
-    Output:
-        (C_prime, U_block, V_block) where:
+    Returns:
+        A tuple ``(C_prime, U_block, V_block)`` where ``U_block`` and
+        ``V_block`` are the s2 x s2 local left and right transforms embedded as
+        ``diag(U_block, I_{s2})`` and ``diag(I_{s2}, V_block)`` such that
+        ``C_prime = diag(U_block, I_{s2}) * C * diag(I_{s2}, V_block)`` is the
+        shifted block from Lemma 7.4.
 
-            - U_block is s2 x s2, the *local left* transform
-              to be embedded as diag(U_block, I_{s2}) on the left.
+    Raises:
+        ValueError: If ``b <= 2`` or ``C`` is not an n2 x n2 block with
+            ``n2 = 2 * (b - 1)``.
 
-            - V_block is s2 x s2, the *local right* transform
-              to be embedded as diag(I_{s2}, V_block) on the right.
-
-            - C_prime = diag(U_block, I_{s2}) * C * diag(I_{s2}, V_block)
-              is the shifted block C' from Lemma 7.4.
-
-    This does *not* attempt to check or enforce bandedness; that is left
+    This function does not attempt to check or enforce bandedness; that is left
     to higher-level tests.
     """
     ring: RingZModN = C.ring
