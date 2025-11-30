@@ -1,4 +1,5 @@
 import math
+import numpy as np
 from modularsnf.matrix import RingMatrix
 from itertools import product
 
@@ -14,7 +15,7 @@ def det_ring_matrix(M: RingMatrix) -> int:
     assert n == M.ncols
 
     if n == 1:
-        return data[0][0] % ring.N
+        return int(data[0, 0] % ring.N)
     if n == 2:
         a, b = data[0]
         c, d = data[1]
@@ -24,13 +25,10 @@ def det_ring_matrix(M: RingMatrix) -> int:
 
     det = 0
     for j in range(n):
-        sub_rows = [
-            row[:j] + row[j+1:]
-            for row in data[1:]
-        ]
+        sub_rows = np.concatenate((data[1:, :j], data[1:, j+1:]), axis=1)
         subM = RingMatrix(ring, sub_rows)
         sub_det = det_ring_matrix(subM)
-        term = ring.mul(data[0][j], sub_det)
+        term = ring.mul(data[0, j], sub_det)
         if j % 2 == 0:
             det = ring.add(det, term)
         else:
@@ -85,16 +83,13 @@ def row_span(M: RingMatrix) -> set[tuple[int, ...]]:
 
     span = set()
     for coeffs in product(range(N), repeat=r):
-        vec = [0] * c
+        vec = np.zeros(c, dtype=int)
         for i, alpha in enumerate(coeffs):
             if alpha == 0:
                 continue
             row = rows[i]
-            vec = [
-                ring.add(v, ring.mul(alpha, row[j]))
-                for j, v in enumerate(vec)
-            ]
-        span.add(tuple(x % N for x in vec))
+            vec = (vec + (alpha * row)) % N
+        span.add(tuple(int(x % N) for x in vec))
     return span
 
 def get_normalized_invariants(M: RingMatrix) -> list[int]:
@@ -103,7 +98,7 @@ def get_normalized_invariants(M: RingMatrix) -> list[int]:
     invariant = gcd(d_i, N).
     """
     n = min(M.nrows, M.ncols)
-    diags = [M.data[i][i] for i in range(n)]
-    invariants = [math.gcd(d, M.ring.N) for d in diags]
+    diags = np.diag(M.data[:n, :n])
+    invariants = [math.gcd(int(d), M.ring.N) for d in diags]
     invariants.sort()
     return invariants

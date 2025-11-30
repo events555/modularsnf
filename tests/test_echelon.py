@@ -1,6 +1,8 @@
 import math
 import random
 
+import numpy as np
+
 import pytest
 from modularsnf.ring import RingZModN
 from modularsnf.matrix import RingMatrix
@@ -20,10 +22,10 @@ def test_lemma_3_1_equation_and_row_module(N):
     ]
     A = RingMatrix.from_rows(ring, A_rows)
 
-    U, T = lemma_3_1(A)
+    U, T, _ = lemma_3_1(A)
 
     UA = U @ A
-    assert UA.data == T.data
+    assert np.array_equal(UA.data, T.data)
 
     span_A = row_span(A)
     span_T = row_span(T)
@@ -40,7 +42,7 @@ def test_lemma_3_1_unimodular_U(N):
     ]
     A = RingMatrix.from_rows(ring, A_rows)
 
-    U, T = lemma_3_1(A)
+    U, T, _ = lemma_3_1(A)
 
     det_U = det_ring_matrix(U) % N
     assert math.gcd(det_U, N) == 1, f"det(U)={det_U} not a unit mod {N}"
@@ -68,7 +70,7 @@ def test_lemma_3_1_echelon_structure(N):
 
     for rows in examples:
         A = RingMatrix.from_rows(ring, rows)
-        _, T = lemma_3_1(A)
+        _, T, _ = lemma_3_1(A)
 
         assert verify_echelon_structure(T), (
             f"T is not in echelon form over Z/{N}: {T.data}"
