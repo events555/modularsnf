@@ -1,30 +1,90 @@
+"""Ring-aware matrix utilities for modular Smith normal form routines.
+
+Defines the ``RingMatrix`` dataclass and helpers that normalize data, manage
+block operations, and align shapes for modular arithmetic workflows.
+"""
+
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Tuple, Union
+
+import numpy as np
 
 from modularsnf.ring import RingZModN
+
+def _normalize_matrix_data(data: Union[List[List[int]], np.ndarray]) -> np.ndarray:
+    """
+    Ensure matrix-like input is a 2D ``np.ndarray`` of ints.
+
+    Allows callers to pass either a list-of-lists or an ndarray. Empty inputs
+    become an explicit (0, 0) array so downstream shape logic remains simple.
+    """
+    if isinstance(data, np.ndarray):
+        try:
+            arr = np.array(data, dtype=int, copy=True)
+        except OverflowError:
+            # Fallback for extremely large Python ints (e.g., SymPy Integers)
+            # that cannot be stored in a fixed-width dtype.
+            arr = np.array(data, dtype=object, copy=True)
+        if arr.size == 0:
+            return arr.reshape((0, 0))
+        if arr.ndim == 1:
+            return arr.reshape(1, arr.size)
+        if arr.ndim != 2:
+            raise ValueError("Matrix data must be 2-dimensional")
+        return arr
+
+    rows = [list(row) for row in data]
+    if not rows:
+        return np.zeros((0, 0), dtype=int)
+
+    ncols = len(rows[0])
+    for row in rows:
+        if len(row) != ncols:
+            raise ValueError("All rows must have the same length")
+
+    try:
+        return np.array(rows, dtype=int)
+    except OverflowError:
+        # Same fallback as above for list inputs that include unbounded ints.
+        return np.array(rows, dtype=object)
+
+
+def _to_list_if_array(data: Union[List[List[int]], np.ndarray]) -> List[List[int]]:
+    """Return nested Python lists, preserving list inputs for callers that expect them."""
+    if isinstance(data, np.ndarray):
+        return data.tolist()
+    return data
+
 
 @dataclass
 class RingMatrix:
     ring: RingZModN
-    data: List[List[int]]
+    data: np.ndarray
 
     def __post_init__(self):
-        if not self.data:
-            return
-        ncols = len(self.data[0])
-        for row in self.data:
-            if len(row) != ncols:
-                raise ValueError("All rows must have the same length")
+        self.data = _normalize_matrix_data(self.data)
         N = self.ring.N
-        self.data = [[x % N for x in row] for row in self.data]
+        self.data %= N
+        # If we had to fall back to object dtype for normalization (e.g., from
+        # extremely large Python ints), normalize back to a numeric dtype after
+        # reduction. This keeps downstream NumPy ops (matmul, slicing, etc.) on
+        # the cheaper fixed-width path when possible while still tolerating
+        # arbitrarily large intermediate values. If the reduced values still
+        # cannot fit, we continue with object dtype.
+        if self.data.dtype == object:
+            try:
+                self.data = self.data.astype(int)
+            except (OverflowError, ValueError, TypeError):
+                # Remain object-typed; operations will still work, just a bit slower.
+                pass
 
     @property
     def nrows(self) -> int:
-        return len(self.data)
+        return self.data.shape[0]
 
     @property
     def ncols(self) -> int:
-        return len(self.data[0]) if self.data else 0
+        return self.data.shape[1] if self.data.size else 0
 
     @property
     def shape(self) -> Tuple[int, int]:
@@ -36,15 +96,14 @@ class RingMatrix:
 
     @classmethod
     def identity(cls, ring: RingZModN, n: int) -> "RingMatrix":
-        rows = [[1 if i == j else 0 for j in range(n)] for i in range(n)]
-        return cls(ring, rows)
+        return cls(ring, np.eye(n, dtype=int))
 
     @classmethod
     def diagonal(cls, ring: RingZModN, diag: List[int]) -> "RingMatrix":
         n = len(diag)
-        rows = [[0]*n for _ in range(n)]
+        rows = np.zeros((n, n), dtype=int)
         for i, v in enumerate(diag):
-            rows[i][i] = v
+            rows[i, i] = v
         return cls(ring, rows)
 
     @classmethod
@@ -65,36 +124,30 @@ class RingMatrix:
         total_rows = a_rows + b_rows
         total_cols = a_cols + b_cols
 
-        zero = 0
-        data = [[zero for _ in range(total_cols)] for _ in range(total_rows)]
+        data = np.zeros((total_rows, total_cols), dtype=int)
 
         # top-left: A
-        for i in range(a_rows):
-            for j in range(a_cols):
-                data[i][j] = A.data[i][j]
+        data[:a_rows, :a_cols] = A.data
 
         # bottom-right: B
-        for i in range(b_rows):
-            for j in range(b_cols):
-                data[a_rows + i][a_cols + j] = B.data[i][j]
+        data[a_rows:, a_cols:] = B.data
 
         return cls(ring, data)
 
     def copy(self) -> "RingMatrix":
-        return RingMatrix(self.ring, [row[:] for row in self.data])
+        return RingMatrix(self.ring, np.copy(self.data))
 
     def transpose(self) -> "RingMatrix":
-        t = list(zip(*self.data))
-        return RingMatrix(self.ring, [list(row) for row in t])
+        return RingMatrix(self.ring, np.transpose(self.data))
 
     def __matmul__(self, other: "RingMatrix") -> "RingMatrix":
         if self.ring is not other.ring:
             raise ValueError("Cannot multiply matrices over different rings")
 
         rA = len(self.data)
-        cA = len(self.data[0]) if rA else 0
-        rB = len(other.data)
-        cB = len(other.data[0]) if rB else 0
+        cA = self.ncols
+        rB = other.nrows
+        cB = other.ncols
 
         if cA != rB:
             raise ValueError(f"Dimension mismatch: {cA} != {rB}")
@@ -105,21 +158,7 @@ class RingMatrix:
         A = self.data
         B = other.data
 
-        # Pre-allocate result
-        C = [[0] * cB for _ in range(rA)]
-
-        for i in range(rA):
-            Ai = A[i]
-            Ci = C[i]
-            for k in range(cA):
-                aik = Ai[k]
-                if aik == 0:
-                    continue
-                Bk = B[k]
-                for j in range(cB):
-                    Ci[j] += aik * Bk[j]
-            for j in range(cB):
-                Ci[j] %= N
+        C = (A @ B) % N
 
         return RingMatrix(ring, C)
 
@@ -128,10 +167,8 @@ class RingMatrix:
         if rows == target_rows and cols == target_cols:
             return self.copy()
         N = self.ring.N
-        new = [[0]*target_cols for _ in range(target_rows)]
-        for r in range(rows):
-            for c in range(cols):
-                new[r][c] = self.data[r][c] % N
+        new = np.zeros((target_rows, target_cols), dtype=int)
+        new[:rows, :cols] = self.data[:rows, :cols] % N
         return RingMatrix(self.ring, new)
 
     def pad_to_square_power2(self) -> "RingMatrix":
@@ -147,11 +184,8 @@ class RingMatrix:
         Return a view copy of rows [row_start:row_end) and
         cols [col_start:col_end).
         """
-        rows = [
-            row[col_start:col_end]
-            for row in self.data[row_start:row_end]
-        ]
-        return RingMatrix(self.ring, rows)
+        rows = self.data[row_start:row_end, col_start:col_end]
+        return RingMatrix(self.ring, np.copy(rows))
 
     def write_block(self, row_start: int, col_start: int,
                     block: "RingMatrix") -> None:
@@ -162,30 +196,21 @@ class RingMatrix:
         if self.ring is not block.ring:
             raise ValueError("Cannot write block with different ring")
         b_rows, b_cols = block.shape
-        for i in range(b_rows):
-            for j in range(b_cols):
-                self.data[row_start + i][col_start + j] = block.data[i][j]
+        self.data[row_start:row_start + b_rows, col_start:col_start + b_cols] = block.data
 
 
     def apply_row_2x2(self, r: int, i: int, s: int, t: int, u: int, v: int) -> None:
         """In-place:  [row_r; row_i] <- [s t; u v] [row_r; row_i]."""
-        ring = self.ring
-        row_r = self.data[r]
-        row_i = self.data[i]
-        new_r = [
-            ring.add(ring.mul(s, x), ring.mul(t, y))
-            for x, y in zip(row_r, row_i)
-        ]
-        new_i = [
-            ring.add(ring.mul(u, x), ring.mul(v, y))
-            for x, y in zip(row_r, row_i)
-        ]
-        self.data[r] = new_r
-        self.data[i] = new_i
+        N = self.ring.N
+        rows = self.data[[r, i], :]
+        transform = np.array([[s, t], [u, v]], dtype=int) % N
+        new_rows = (transform @ rows) % N
+        self.data[r, :] = new_rows[0]
+        self.data[i, :] = new_rows[1]
 
     def to_sympy(self):
         import sympy as sp
-        return sp.Matrix(self.data)
+        return sp.Matrix(_to_list_if_array(self.data))
 
     def pprint(self):
         from sympy import pprint

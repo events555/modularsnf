@@ -1,5 +1,6 @@
 import math
 import random
+import numpy as np
 import pytest
 
 # Try importing SymPy for ground truth verification
@@ -49,7 +50,7 @@ class TestSmithNormalForm:
         assert S.shape == A.shape
 
         LHS = U @ A @ V
-        assert LHS.data == S.data, "Transform mismatch: U @ A @ V != S"
+        assert np.array_equal(LHS.data, S.data), "Transform mismatch: U @ A @ V != S"
 
     @pytest.mark.parametrize("random_matrix", [
         (N, r, c) for N in [6, 12] for r, c in DIMENSIONS
@@ -142,9 +143,9 @@ class TestSmithNormalForm:
         ring = RingZModN(12)
         A = RingMatrix.from_rows(ring, [[0, 0], [0, 0]])
         U, V, S = compute_snf(A)
-        
-        assert S.data == [[0, 0], [0, 0]]
-        assert (U @ A @ V).data == S.data
+
+        assert np.array_equal(S.data, np.zeros((2, 2), dtype=int))
+        assert np.array_equal((U @ A @ V).data, S.data)
 
     def test_identity_matrix(self):
         """Test already diagonal matrix (identity)."""
@@ -167,13 +168,11 @@ class TestSmithNormalForm:
         diag(2, 1) mod 4 -> should become diag(1, 2).
         """
         ring = RingZModN(4)
-        A = RingMatrix.diagonal(ring, [2, 1]) 
-        
+        A = RingMatrix.diagonal(ring, [2, 1])
+
         _, _, S = compute_snf(A)
-        
-        diags = [S.data[i][i] for i in range(2)]
-        
+
         invariants = get_normalized_invariants(S)
-        assert invariants == [1, 2] 
+        assert invariants == [1, 2]
         assert (S.data[0][0] == 1 or S.data[0][0] == 3)
         assert S.data[1][1] == 2

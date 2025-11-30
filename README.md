@@ -1,14 +1,14 @@
 # Smith Normal form of Integer matrices mod N (Storjohann)
 
-This is a Python module that implements the algorithm found in Storjohann's PhD dissertation on Algorithms for Matrix Canonical Forms.
+This is a Python module that follows the deterministic algorithms presented in Arne Storjohann's PhD Dissertation *Algorithms for Matrix Canonical Forms* (ETH No. 13922, 2000).
 
-It implements all the Lemmas and subsequent subroutines that are necessary.
+It implements the Lemmas and subsequent subroutines that are necessary for calculating the SNF without exponential intermediate values.
 
-It validates it by against SymPy using a known equivalence between calculating the Smith Normal form of an integer matrix, and then taking mod N, compared to solving it natively in the ring.
+It validates against SymPy using a known equivalence between calculating the Smith Normal form of an integer matrix, and then taking mod N, compared to solving it natively in the ring.
 
-The algorithm has two phases:
+The algorithm has two main phases:
 1. **Band Reduction:** Transforming an arbitrary matrix into an upper bi-diagonal (2-banded) matrix.
-2.  **Diagonalization:** Transforming the bi-diagonal matrix into the canonical Smith Normal Form.
+2. **Diagonalization:** Transforming the bi-diagonal matrix into the canonical Smith Normal Form.
 
 ## Mathematical Foundation
 
@@ -20,7 +20,7 @@ The algorithm operates over the Principal Ideal Ring $R = \mathbb{Z}/N\mathbb{Z}
     \begin{bmatrix} s & t \\ u & v \end{bmatrix} \begin{bmatrix} a \\ b \end{bmatrix} = \begin{bmatrix} g \\ 0 \end{bmatrix}
     $$
    where $\det(M) = sv - tu$ is a unit in $R$.
-
+* **Stabilizer (`Stab`):** When working with zero divisors, we compute a stabilizer $c$ such that $\text{gcd}(a+cb, N) = \text{gcd}(a, b, N)$ [Lemma 1.1].
 
 ## Triangularization
 
@@ -49,5 +49,24 @@ This routine chases the fill-in created by `Triang` down the diagonal to restore
 * **Step 1:** Applies a left transform $U$ (derived via Lemma 3.1) to clear the first column block.
 * **Step 2:** Applies a right transform $V$ to restore upper-triangularity to the subsequent block.
 
-## To be continued (WIP)
-* Implementation of Phase 2: Diagonalization (Bi-diagonal to SNF).
+## Diagonalization (Phase 2)
+
+Once the matrix is upper bi-diagonal, we proceed to the final Smith Normal Form. This involves two steps: reducing the bi-diagonal matrix to a strictly diagonal one, and then fixing the divisibility of the diagonal entries.
+
+### 1. Bi-diagonal to Diagonal (Proposition 7.12)
+This routine eliminates the super-diagonal entries of the 2-banded matrix. It applies a specific sequence of `Gcdex`, `Stab`, and `Div` operations to "chase" non-zero off-diagonal entries off the matrix, resulting in a diagonal matrix $D$.
+
+### 2. Diagonal to Smith Form (Proposition 7.7)
+A diagonal matrix is only in Smith Normal Form if the diagonal entries satisfy the divisibility chain $d_i | d_{i+1}$. This routine enforces that property using a recursive divide-and-conquer approach:
+* **Recursive Step:** The matrix is split into two halves, each is recursively solved.
+* **Merge Step (Theorem 7.11):** The two solved halves are merged using a 5-step process that combines the invariants of the two blocks.
+* **Base Case (Lemma 7.10):** For a $2 \times 2$ block, we apply atomic reductions to ensure the divisibility condition holds.
+
+## Implementation Status
+
+We have implemented the full pipeline to reach **Lemma 7.14** (Square SNF):
+
+* **Ring Primitives (`modularsnf.ring`)**: Implemented over $\mathbb{Z}/N\mathbb{Z}$, including `Gcdex`, `Stab`, `Div`, and `Ann`.
+* **Echelon Forms (`modularsnf.echelon`)**: Implemented **Lemma 3.1** for recursive column clearing.
+* **Band Reduction (`modularsnf.snf`)**: Implemented **Lemma 7.3** (`Triang`) and **Lemma 7.4** (`Shift`) to reduce matrix bandwidth.
+* **Diagonalization (`modularsnf.diagonal`)**: Implemented **Proposition 7.7** and **Theorem 7.11** to sort diagonal entries by divisibility.
