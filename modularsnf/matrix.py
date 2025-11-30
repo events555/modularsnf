@@ -1,3 +1,9 @@
+"""Ring-aware matrix utilities for modular Smith normal form routines.
+
+Defines the ``RingMatrix`` dataclass and helpers that normalize data, manage
+block operations, and align shapes for modular arithmetic workflows.
+"""
+
 from dataclasses import dataclass
 from typing import List, Tuple, Union
 
