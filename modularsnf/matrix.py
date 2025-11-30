@@ -4,7 +4,7 @@ Defines the ``RingMatrix`` dataclass and helpers that normalize data, manage
 block operations, and align shapes for modular arithmetic workflows.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Tuple, Union
 
 import numpy as np
@@ -49,6 +49,27 @@ def _normalize_matrix_data(data: Union[List[List[int]], np.ndarray]) -> np.ndarr
         return np.array(rows, dtype=object)
 
 
+def _is_within_modulus(data: np.ndarray, N: int) -> bool:
+    """Return True when ``data`` is provably in ``[0, N)``.
+
+    Avoids expensive copies by only skipping the modulus reduction when values
+    are demonstrably safe. Object-typed arrays or non-numeric dtypes always
+    force reduction to avoid unsafe assumptions.
+    """
+    if data.size == 0:
+        return True
+    if data.dtype == object:
+        return False
+    if not np.issubdtype(data.dtype, np.integer):
+        return False
+    try:
+        min_val = data.min()
+        max_val = data.max()
+    except (OverflowError, TypeError, ValueError):
+        return False
+    return 0 <= min_val and max_val < N
+
+
 def _to_list_if_array(data: Union[List[List[int]], np.ndarray]) -> List[List[int]]:
     """Return nested Python lists, preserving list inputs for callers that expect them."""
     if isinstance(data, np.ndarray):
@@ -60,11 +81,16 @@ def _to_list_if_array(data: Union[List[List[int]], np.ndarray]) -> List[List[int
 class RingMatrix:
     ring: RingZModN
     data: np.ndarray
+    _assume_reduced: bool = field(default=False, init=True, repr=False)
 
     def __post_init__(self):
         self.data = _normalize_matrix_data(self.data)
         N = self.ring.N
-        self.data %= N
+
+        # Fast path: internal callers that explicitly guarantee the array is
+        # already reduced, or data we can verify is inside [0, N).
+        if not (self._assume_reduced or _is_within_modulus(self.data, N)):
+            self.data %= N
         # If we had to fall back to object dtype for normalization (e.g., from
         # extremely large Python ints), normalize back to a numeric dtype after
         # reduction. This keeps downstream NumPy ops (matmul, slicing, etc.) on
