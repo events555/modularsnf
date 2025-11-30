@@ -13,7 +13,12 @@ def _normalize_matrix_data(data: Union[List[List[int]], np.ndarray]) -> np.ndarr
     become an explicit (0, 0) array so downstream shape logic remains simple.
     """
     if isinstance(data, np.ndarray):
-        arr = np.array(data, dtype=int, copy=True)
+        try:
+            arr = np.array(data, dtype=int, copy=True)
+        except OverflowError:
+            # Fallback for extremely large Python ints (e.g., SymPy Integers)
+            # that cannot be stored in a fixed-width dtype.
+            arr = np.array(data, dtype=object, copy=True)
         if arr.size == 0:
             return arr.reshape((0, 0))
         if arr.ndim == 1:
@@ -31,7 +36,11 @@ def _normalize_matrix_data(data: Union[List[List[int]], np.ndarray]) -> np.ndarr
         if len(row) != ncols:
             raise ValueError("All rows must have the same length")
 
-    return np.array(rows, dtype=int)
+    try:
+        return np.array(rows, dtype=int)
+    except OverflowError:
+        # Same fallback as above for list inputs that include unbounded ints.
+        return np.array(rows, dtype=object)
 
 
 def _to_list_if_array(data: Union[List[List[int]], np.ndarray]) -> List[List[int]]:
@@ -50,6 +59,18 @@ class RingMatrix:
         self.data = _normalize_matrix_data(self.data)
         N = self.ring.N
         self.data %= N
+        # If we had to fall back to object dtype for normalization (e.g., from
+        # extremely large Python ints), normalize back to a numeric dtype after
+        # reduction. This keeps downstream NumPy ops (matmul, slicing, etc.) on
+        # the cheaper fixed-width path when possible while still tolerating
+        # arbitrarily large intermediate values. If the reduced values still
+        # cannot fit, we continue with object dtype.
+        if self.data.dtype == object:
+            try:
+                self.data = self.data.astype(int)
+            except (OverflowError, ValueError, TypeError):
+                # Remain object-typed; operations will still work, just a bit slower.
+                pass
 
     @property
     def nrows(self) -> int:
