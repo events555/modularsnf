@@ -39,25 +39,25 @@ def triang(B: RingMatrix, b: int) -> Tuple[RingMatrix, RingMatrix]:
     if B.nrows != B.ncols or B.nrows != n1:
         raise ValueError(f"Triang expects an n1 x n1 block with n1 = s1 + s2 = {n1}")
 
-    # 1. Extract B2: top-right s1 x s2 block
+    # Extract the top-right s1 x s2 block.
     row0, row1 = 0, s1
     col0, col1 = s1, s1 + s2
     B2 = B.submatrix(row0, row1, col0, col1)   # shape (s1, s2)
 
-    # 2. Work with C = B2^T (shape s2 x s1)
+    # Transpose B2 to work with the s2 x s1 view.
     C = B2.transpose()
 
-    # 3. Apply Lemma 3.1 to C: U_left * C = T_ech
+    # Apply Lemma 3.1 to obtain the left transform for C.
     U_left, T_ech, _ = lemma_3_1(C)  # U_left: s2 x s2, T_ech: s2 x s1
 
-    # 4. Local right transform is W = U_left^T
+    # Use the transpose of the left transform as the local right transform.
     W = U_left.transpose()        # W: s2 x s2
 
-    # 5. Build local block-diagonal right transform V_loc = diag(I_{s1}, W)
+    # Form the block-diagonal right transform.
     I_s1 = RingMatrix.identity(ring, s1)
     V_loc = RingMatrix.block_diag(I_s1, W)     # n1 x n1
 
-    # 6. Compute B' = B * V_loc
+    # Multiply by the block-diagonal transform.
     B_prime = B @ V_loc
 
     return B_prime, W
@@ -98,34 +98,23 @@ def shift(C: RingMatrix, b: int) -> Tuple[RingMatrix, RingMatrix, RingMatrix]:
             f"got shape {C.shape}"
         )
 
-    # Block partition:
-    # C = [ C1  C2 ]
-    #     [ C3  C4 ]   (C4 may be irrelevant structurally, but it's there)
-    #
-    # Each block is s2 x s2.
+    # Block partition where each block is s2 x s2.
     C1 = C.submatrix(0, s2, 0, s2)          # top-left
     C2 = C.submatrix(0, s2, s2, 2 * s2)     # top-right
     # C3 = C.submatrix(s2, 2 * s2, 0, s2)   # bottom-left (not used directly)
     # C4 = C.submatrix(s2, 2 * s2, s2, 2 * s2)
 
-    # Step 1: Left triangularization of C1.
-    #
-    # lemma_3_1(C1) returns (U1, T1) with T1 = U1 * C1 in row-ech form.
-    # We take U_block := U1, to be embedded on the left as diag(U1, I).
+    # Apply Lemma 3.1 to triangularize C1 on the left.
     U1, T1, _ = lemma_3_1(C1)      # shapes: U1 s2×s2, T1 s2×s2
 
-    # Step 2: Right triangularization of (U1 * C2).
-    #
-    # First form C2' = U1 * C2, then apply lemma_3_1 to (C2')^T to get
-    # a left transform U2; the corresponding right transform is V_block = U2^T,
-    # so that C2' * V_block = (T2)^T is triangular.
+    # Triangularize U1 * C2 on the right via Lemma 3.1 applied to its transpose.
     C2_prime = U1 @ C2                          # s2×s2
 
     C2_prime_T = C2_prime.transpose()           # s2×s2
     U2, T2, _ = lemma_3_1(C2_prime_T)              # U2 s2×s2, T2 s2×s2
     V_block = U2.transpose()                    # s2×s2
 
-    # Step 3: Form full local left/right transforms and apply them to C.
+    # Assemble the local transforms and apply them to C.
     I_s2 = RingMatrix.identity(ring, s2)
 
     U_full = RingMatrix.block_diag(U1, I_s2)    # n2×n2 = diag(U1, I_s2)
@@ -135,75 +124,7 @@ def shift(C: RingMatrix, b: int) -> Tuple[RingMatrix, RingMatrix, RingMatrix]:
 
     return C_prime, U1, V_block
 
-# def band_reduction(A: RingMatrix, b: int, t: int = 0) -> Tuple[RingMatrix, int]:
-#     """
-#     Algorithm BandReduction(A, b) as in your screenshot.
-
-#     Input:
-#         A : an upper b-banded n×n RingMatrix with last t columns zero.
-#         b : current bandwidth, b > 2.
-#         t : number of trailing zero columns.
-
-#     Output:
-#         (A_reduced, b_new) where:
-#             A_reduced : upper ((floor(b/2) + 1))-banded matrix equivalent to A
-#                         and with last t columns still zero.
-#             b_new     : floor(b/2) + 1
-#     """
-#     if b <= 2:
-#         return A.copy(), b
-
-#     ring: RingZModN = A.ring
-#     n = A.nrows
-#     if n != A.ncols:
-#         raise ValueError("BandReduction expects a square matrix")
-
-#     # s1 := floor(b/2)
-#     s1 = b // 2
-#     # n1 := floor(b/2) + b - 1
-#     n1 = (b // 2) + b - 1
-#     # s2 := b - 1
-#     s2 = b - 1
-#     # n2 := 2(b - 1)
-#     n2 = 2 * (b - 1)
-
-#     # B := copy of A augmented with 2b - t rows/cols of zeros
-#     pad = 2 * b - t
-#     N_big = n + pad
-
-#     zero = 0
-#     B_data = [[zero for _ in range(N_big)] for _ in range(N_big)]
-#     for i in range(n):
-#         for j in range(n):
-#             B_data[i][j] = A.data[i][j]
-#     B = RingMatrix(ring, B_data)
-
-#     # for i = 0 to ceil((n - t)/s1) - 1 do
-#     num_i = max(0, (n - t + s1 - 1) // s1)
-#     for i in range(num_i):
-#         # subB[is1, n1] means principal submatrix of size n1 starting at is1
-#         top = i * s1
-#         B_block = B.submatrix(top, top + n1, top, top + n1)
-#         B_block_prime, _W = triang(B_block, b)
-#         B.write_block(top, top, B_block_prime)
-
-#         # for j = 0 to ceil((n - t - (i + 1)s1)/s2) - 1 do
-#         numer = n - t - (i + 1) * s1
-#         if numer <= 0:
-#             continue
-#         num_j = max(0, (numer + s2 - 1) // s2)
-
-#         for j in range(num_j):
-#             # subB[(i+1)s1 + js2, n2]
-#             offset = (i + 1) * s1 + j * s2
-#             C_block = B.submatrix(offset, offset + n2, offset, offset + n2)
-#             C_block_prime, _U_block, _V_block = shift(C_block, b)
-#             B.write_block(offset, offset, C_block_prime)
-
-#     # return subB[0, n]
-#     A_reduced = B.submatrix(0, n, 0, n)
-#     b_new = (b // 2) + 1
-#     return A_reduced, b_new
+# TODO: Implement band_reduction following Storjohann's BandReduction algorithm (see https://uwspace.uwaterloo.ca/items/b2a6ebc4-f0e2-40ab-93f1-7b5c7d4d1b7f).
 
 def band_reduction(
     A: RingMatrix,

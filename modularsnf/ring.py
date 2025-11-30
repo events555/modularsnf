@@ -41,8 +41,7 @@ class RingZModN:
         """
         r = self.rem(a, b)
         diff = self.sub(a, r)
-        # We need q such that q*b = diff. 
-        # Since diff is a multiple of b (by def of remainder), division is exact.
+        # Find q such that q*b equals diff; diff is a multiple of b by definition of the remainder.
         return self.div(diff, b)
 
     def ann(self, a):
@@ -63,8 +62,7 @@ class RingZModN:
         a_val = a % self.N
         b_val = b % self.N
 
-        # Dissertation constraint: if b is divisible by a, return specific form.
-        # We check if b is a multiple of a in Z/N.
+        # Return the specialized form when b is a multiple of a in Z/N.
         if a_val != 0 and (b_val % math.gcd(a_val, self.N) == 0):
              # Check if exact division exists
              try:
@@ -72,7 +70,7 @@ class RingZModN:
                  # s=1, t=0, u=-q, v=1 -> det = 1
                  return (a_val, 1, 0, (self.N - q) % self.N, 1)
              except ValueError:
-                 pass # Fall through to standard logic if exact div fails
+                 pass # Fall through to standard logic if exact division fails.
 
         # Standard Euclidean
         r0, r1 = a_val, b_val
@@ -87,8 +85,7 @@ class RingZModN:
             
         g, s, t = r0, s0, t0
         
-        # We need u, v such that u*a + v*b = 0 and det is unit.
-        # u = -b/g, v = a/g
+        # Compute u, v such that u*a + v*b = 0 and det is a unit (u = -b/g, v = a/g).
         if g == 0: return 0, 1, 0, 0, 1
         
         u = -(b_val // g)
