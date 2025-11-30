@@ -107,6 +107,22 @@ class RingMatrix:
         return cls(ring, rows)
 
     @classmethod
+    def _from_ndarray(cls, ring: RingZModN, data: np.ndarray) -> "RingMatrix":
+        """Internal fast constructor for pre-normalized arrays.
+
+        Callers must ensure ``data`` is already 2-D, reduced modulo ``ring.N``,
+        and uses an appropriate dtype. No copying or normalization is
+        performed.
+        """
+        if data.ndim != 2:
+            raise ValueError("Matrix data must be 2-dimensional")
+
+        obj = cls.__new__(cls)
+        obj.ring = ring
+        obj.data = data
+        return obj
+
+    @classmethod
     def block_diag(cls, A: "RingMatrix", B: "RingMatrix") -> "RingMatrix":
         """
         Block-diagonal composition:
@@ -132,13 +148,13 @@ class RingMatrix:
         # bottom-right: B
         data[a_rows:, a_cols:] = B.data
 
-        return cls(ring, data)
+        return cls._from_ndarray(ring, data)
 
     def copy(self) -> "RingMatrix":
-        return RingMatrix(self.ring, np.copy(self.data))
+        return RingMatrix._from_ndarray(self.ring, np.copy(self.data))
 
     def transpose(self) -> "RingMatrix":
-        return RingMatrix(self.ring, np.transpose(self.data))
+        return RingMatrix._from_ndarray(self.ring, np.transpose(self.data))
 
     def __matmul__(self, other: "RingMatrix") -> "RingMatrix":
         if self.ring is not other.ring:
@@ -160,7 +176,7 @@ class RingMatrix:
 
         C = (A @ B) % N
 
-        return RingMatrix(ring, C)
+        return RingMatrix._from_ndarray(ring, C)
 
     def pad_to(self, target_rows: int, target_cols: int) -> "RingMatrix":
         rows, cols = self.shape
@@ -169,7 +185,7 @@ class RingMatrix:
         N = self.ring.N
         new = np.zeros((target_rows, target_cols), dtype=int)
         new[:rows, :cols] = self.data[:rows, :cols] % N
-        return RingMatrix(self.ring, new)
+        return RingMatrix._from_ndarray(self.ring, new)
 
     def pad_to_square_power2(self) -> "RingMatrix":
         n = max(self.nrows, self.ncols)
@@ -185,7 +201,7 @@ class RingMatrix:
         cols [col_start:col_end).
         """
         rows = self.data[row_start:row_end, col_start:col_end]
-        return RingMatrix(self.ring, np.copy(rows))
+        return RingMatrix._from_ndarray(self.ring, np.copy(rows))
 
     def write_block(self, row_start: int, col_start: int,
                     block: "RingMatrix") -> None:
