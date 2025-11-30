@@ -16,9 +16,15 @@ The algorithm operates over the Principal Ideal Ring $R = \mathbb{Z}/N\mathbb{Z}
 
 * **The Ring:** We operate in $\mathbb{Z}/N\mathbb{Z}$. Operations must respect zero divisors.
 * **Atomic Reduction (`Gcdex`):** Instead of division, we use the Extended Euclidean Algorithm to compute a unimodular matrix $M$ that eliminates entries. For any $a, b \in R$:
-    $$
-    \begin{bmatrix} s & t \\ u & v \end{bmatrix} \begin{bmatrix} a \\ b \end{bmatrix} = \begin{bmatrix} g \\ 0 \end{bmatrix}
-    $$
+
+$$
+\begin{bmatrix} s & t \\ 
+u & v \end{bmatrix} 
+\begin{bmatrix} a \\ 
+b \end{bmatrix} = \begin{bmatrix} g \\ 
+0 \end{bmatrix}
+$$
+
    where $\det(M) = sv - tu$ is a unit in $R$.
 * **Stabilizer (`Stab`):** When working with zero divisors, we compute a stabilizer $c$ such that $\text{gcd}(a+cb, N) = \text{gcd}(a, b, N)$ [Lemma 1.1].
 
@@ -27,9 +33,11 @@ The algorithm operates over the Principal Ideal Ring $R = \mathbb{Z}/N\mathbb{Z}
 The core routine for the reduction is **Lemma 3.1**.
 
 Given a matrix $A$, we compute a unimodular left-transform $U$ and an echelon form $T$ such that:
+
 $$
 UA = T
 $$
+
 This routine is used recursively to clear columns or rows within specific sub-blocks of the matrix during the Band Reduction phase.
 
 ## Band Reduction (Phase 1)
