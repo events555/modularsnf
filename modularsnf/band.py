@@ -5,9 +5,13 @@ support Smith normal form reduction over modular rings.
 """
 
 from typing import Tuple
-from modularsnf.ring import RingZModN
-from modularsnf.matrix import RingMatrix
+
+import numpy as np
+
 from modularsnf.echelon import lemma_3_1
+from modularsnf.matrix import RingMatrix
+from modularsnf.ring import RingZModN
+
 
 def triang(B: RingMatrix, b: int) -> Tuple[RingMatrix, RingMatrix]:
     """
@@ -37,12 +41,14 @@ def triang(B: RingMatrix, b: int) -> Tuple[RingMatrix, RingMatrix]:
     n1 = s1 + s2
 
     if B.nrows != B.ncols or B.nrows != n1:
-        raise ValueError(f"Triang expects an n1 x n1 block with n1 = s1 + s2 = {n1}")
+        raise ValueError(
+            f"Triang expects an n1 x n1 block with n1 = s1 + s2 = {n1}"
+        )
 
     # Extract the top-right s1 x s2 block.
     row0, row1 = 0, s1
     col0, col1 = s1, s1 + s2
-    B2 = B.submatrix(row0, row1, col0, col1)   # shape (s1, s2)
+    B2 = B.submatrix(row0, row1, col0, col1)  # shape (s1, s2)
 
     # Transpose B2 to work with the s2 x s1 view.
     C = B2.transpose()
@@ -51,16 +57,17 @@ def triang(B: RingMatrix, b: int) -> Tuple[RingMatrix, RingMatrix]:
     U_left, T_ech, _ = lemma_3_1(C)  # U_left: s2 x s2, T_ech: s2 x s1
 
     # Use the transpose of the left transform as the local right transform.
-    W = U_left.transpose()        # W: s2 x s2
+    W = U_left.transpose()  # W: s2 x s2
 
     # Form the block-diagonal right transform.
     I_s1 = RingMatrix.identity(ring, s1)
-    V_loc = RingMatrix.block_diag(I_s1, W)     # n1 x n1
+    V_loc = RingMatrix.block_diag(I_s1, W)  # n1 x n1
 
     # Multiply by the block-diagonal transform.
     B_prime = B @ V_loc
 
     return B_prime, W
+
 
 def shift(C: RingMatrix, b: int) -> Tuple[RingMatrix, RingMatrix, RingMatrix]:
     """
@@ -99,32 +106,34 @@ def shift(C: RingMatrix, b: int) -> Tuple[RingMatrix, RingMatrix, RingMatrix]:
         )
 
     # Block partition where each block is s2 x s2.
-    C1 = C.submatrix(0, s2, 0, s2)          # top-left
-    C2 = C.submatrix(0, s2, s2, 2 * s2)     # top-right
+    C1 = C.submatrix(0, s2, 0, s2)  # top-left
+    C2 = C.submatrix(0, s2, s2, 2 * s2)  # top-right
     # C3 = C.submatrix(s2, 2 * s2, 0, s2)   # bottom-left (not used directly)
     # C4 = C.submatrix(s2, 2 * s2, s2, 2 * s2)
 
     # Apply Lemma 3.1 to triangularize C1 on the left.
-    U1, T1, _ = lemma_3_1(C1)      # shapes: U1 s2×s2, T1 s2×s2
+    U1, T1, _ = lemma_3_1(C1)  # shapes: U1 s2×s2, T1 s2×s2
 
     # Triangularize U1 * C2 on the right via Lemma 3.1 applied to its transpose.
-    C2_prime = U1 @ C2                          # s2×s2
+    C2_prime = U1 @ C2  # s2×s2
 
-    C2_prime_T = C2_prime.transpose()           # s2×s2
-    U2, T2, _ = lemma_3_1(C2_prime_T)              # U2 s2×s2, T2 s2×s2
-    V_block = U2.transpose()                    # s2×s2
+    C2_prime_T = C2_prime.transpose()  # s2×s2
+    U2, T2, _ = lemma_3_1(C2_prime_T)  # U2 s2×s2, T2 s2×s2
+    V_block = U2.transpose()  # s2×s2
 
     # Assemble the local transforms and apply them to C.
     I_s2 = RingMatrix.identity(ring, s2)
 
-    U_full = RingMatrix.block_diag(U1, I_s2)    # n2×n2 = diag(U1, I_s2)
+    U_full = RingMatrix.block_diag(U1, I_s2)  # n2×n2 = diag(U1, I_s2)
     V_full = RingMatrix.block_diag(I_s2, V_block)  # n2×n2 = diag(I_s2, V_block)
 
     C_prime = U_full @ C @ V_full
 
     return C_prime, U1, V_block
 
+
 # TODO: Implement band_reduction following Storjohann's BandReduction algorithm (see https://uwspace.uwaterloo.ca/items/b2a6ebc4-f0e2-40ab-93f1-7b5c7d4d1b7f).
+
 
 def band_reduction(
     A: RingMatrix,
@@ -161,20 +170,17 @@ def band_reduction(
     # Storjohann parameters
     s1 = b // 2
     s2 = b - 1
-    n1 = s1 + s2     # size of the "triang" block
-    n2 = 2 * s2      # size of each "shift" block
+    n1 = s1 + s2  # size of the "triang" block
+    n2 = 2 * s2  # size of each "shift" block
 
     # Padding size in both directions (as in the paper / your original code)
     pad = 2 * b - t
     N_big = n + pad
 
     # Build padded matrix B with A in the top-left n x n principal block
-    B_data = [[0 for _ in range(N_big)] for _ in range(N_big)]
-    for i in range(n):
-        row_i = A.data[i]
-        for j in range(n):
-            B_data[i][j] = row_i[j]
-    B = RingMatrix(ring, B_data)
+    B_arr = np.zeros((N_big, N_big), dtype=int)
+    B_arr[:n, :n] = A.data
+    B = RingMatrix._from_ndarray(ring, B_arr)
 
     # Global transforms on the padded system
     U_big = RingMatrix.identity(ring, N_big)
@@ -195,7 +201,9 @@ def band_reduction(
 
         # Build local right transform V_loc = diag(I_{s1}, W)
         I_s1 = RingMatrix.identity(ring, s1)
-        V_loc = RingMatrix.block_diag(I_s1, W)   # n1 x n1
+        V_loc = RingMatrix.block_diag(I_s1, W)  # n1 x n1
+        I_s1 = RingMatrix.identity(ring, s1)
+        V_loc = RingMatrix.block_diag(I_s1, W)  # n1 x n1
 
         # Embed into N_big x N_big
         V_step = RingMatrix.identity(ring, N_big)
@@ -261,7 +269,7 @@ def compute_upper_bandwidth(M: RingMatrix) -> int:
     max_offset = -1
     for i in range(nrows):
         for j in range(ncols):
-            val = M.data[i][j]
+            val = M.data[i, j]
             if not ring.is_zero(val) and j >= i:
                 offset = j - i
                 if offset > max_offset:
@@ -280,9 +288,9 @@ def project_to_upper_bandwidth(M: RingMatrix, b: int) -> RingMatrix:
     """
     ring = M.ring
     nrows, ncols = M.shape
-    data = [[0 for _ in range(ncols)] for _ in range(nrows)]
+    arr = np.zeros((nrows, ncols), dtype=int)
     for i in range(nrows):
         for j in range(ncols):
             if 0 <= j - i < b:
-                data[i][j] = M.data[i][j]
-    return RingMatrix(ring, data)
+                arr[i, j] = M.data[i, j]
+    return RingMatrix._from_ndarray(ring, arr)

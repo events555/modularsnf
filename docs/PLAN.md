@@ -9,7 +9,7 @@ This ExecPlan focuses on two outcomes:
 
 ## A. Generally Available API (user supplies modulus)
 
-### A1. Add a top-level convenience API
+### A1. Add a top-level convenience API (done)
 
 - Add a function such as
   `smith_normal_form_mod(matrix: list[list[int]], modulus: int)` that:
@@ -25,7 +25,7 @@ This ExecPlan focuses on two outcomes:
 - Invalid modulus (`<= 0`) and ragged matrices raise clear `ValueError`s.
 - Rectangular matrix behavior is documented (padding/cropping semantics).
 
-### A2. API documentation and examples
+### A2. API documentation and examples (done)
 
 - Add usage examples to `README.md`:
   - square matrix over composite modulus,
@@ -39,7 +39,7 @@ This ExecPlan focuses on two outcomes:
 
 ## B. Feature Parity Validation Strategy
 
-### B1. Oracle comparison harness (SymPy-backed)
+### B1. Oracle comparison harness (SymPy-backed) (done)
 
 - Build tests that:
   - Generate random integer matrices `M` and modulus `N`.
@@ -58,7 +58,7 @@ This ExecPlan focuses on two outcomes:
   - composite `N`,
   - high zero-divisor cases (e.g., powers like `2^k`).
 
-### B2. Curated regression corpus
+### B2. Curated regression corpus (done)
 
 - Add a small fixed corpus of matrices that historically break SNF routines:
   - repeated factors,
@@ -71,7 +71,7 @@ This ExecPlan focuses on two outcomes:
 
 - Corpus runs in CI and guards against algorithmic regressions.
 
-### B3. Performance sanity checks (confidence, not benchmarking suite)
+### B3. Performance sanity checks (confidence, not benchmarking suite) (done)
 
 - Add a lightweight timing script/test (optional in CI) for medium sizes.
 - Track runtime/memory trends to catch accidental complexity blowups.

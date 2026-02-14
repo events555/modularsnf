@@ -2,11 +2,14 @@
 
 from typing import NamedTuple, Tuple
 
+import numpy as np
+
 from modularsnf.band import band_reduction, compute_upper_bandwidth
-from .matrix import RingMatrix
-from .ring import RingZModN
+
 from .diagonal import smith_from_diagonal
 from .echelon import index1_reduce_on_columns, lemma_3_1
+from .matrix import RingMatrix
+from .ring import RingZModN
 
 
 class SNFResult(NamedTuple):
@@ -49,14 +52,10 @@ def smith_normal_form_mod(
         >>> S, U, V = smith_normal_form_mod([[2, 4], [6, 8]], modulus=12)
     """
     if not isinstance(modulus, int) or modulus < 2:
-        raise ValueError(
-            f"Modulus must be an integer >= 2, got {modulus!r}"
-        )
+        raise ValueError(f"Modulus must be an integer >= 2, got {modulus!r}")
 
     if not isinstance(matrix, (list, tuple)):
-        raise TypeError(
-            "matrix must be a list of lists of integers"
-        )
+        raise TypeError("matrix must be a list of lists of integers")
 
     # Empty matrix — return empty lists immediately.
     if len(matrix) == 0:
@@ -115,11 +114,7 @@ def smith_normal_form(
 
     # Pad rectangular matrices to a square ``s x s`` matrix before reduction.
     s = max(n, m)
-    data = [[0 for _ in range(s)] for _ in range(s)]
-    for i in range(n):
-        for j in range(m):
-            data[i][j] = A.data[i][j]
-    A_pad = RingMatrix(ring, data)
+    A_pad = A.pad_to(s, s)
 
     U_pad, V_pad, S_pad = _smith_square(A_pad)
 
@@ -249,8 +244,8 @@ def _step1_split_with_spike(
     for k in range(n - 1, n1, -1):
         r0, r1 = k - 1, k
         col = k
-        a = T.data[r0][col]
-        b = T.data[r1][col]
+        a = T.data[r0, col]
+        b = T.data[r1, col]
         g, s, t, u, v = ring.gcdex(a, b)
         T.apply_row_2x2(r0, r1, u, v, s, t)
         U.apply_row_2x2(r0, r1, u, v, s, t)
@@ -259,8 +254,8 @@ def _step1_split_with_spike(
     for k in range(n1 + 1, n - 1):
         r0, r1 = k, k + 1
         col = k
-        a = T.data[r0][col]
-        b = T.data[r1][col]
+        a = T.data[r0, col]
+        b = T.data[r1, col]
         g, s, t, u, v = ring.gcdex(a, b)
         T.apply_row_2x2(r0, r1, s, t, u, v)
         U.apply_row_2x2(r0, r1, s, t, u, v)
@@ -337,25 +332,21 @@ def _step3_permute(
     if n != A.ncols:
         raise ValueError("Expected square matrix")
 
-    # Build permutation matrix P as n x n with P[new_i][old_i] = 1.
-    data = [[0 for _ in range(n)] for _ in range(n)]
-
+    # Build permutation matrix P as n x n with P[new_i, old_i] = 1.
+    perm = np.zeros((n, n), dtype=int)
     for old_i in range(n):
         if old_i < n1:
             new_i = old_i
+        elif old_i == n1:
+            new_i = n - 1
         else:
-            if old_i == n1:
-                new_i = n - 1
-            else:
-                new_i = old_i - 1
-        data[new_i][old_i] = 1
-
-    P = RingMatrix(ring, data)
+            new_i = old_i - 1
+        perm[new_i, old_i] = 1
+    P = RingMatrix._from_ndarray(ring, perm)
     P_inv = P.transpose()  # permutation matrix => inverse = transpose
 
     A3 = P @ A @ P_inv
     return P, P_inv, A3
-
 
 
 def _step4_smith_on_n_minus_1(A: RingMatrix):
@@ -407,7 +398,7 @@ def _step5_to_8_gcd_chain(
 
     idx_k = n - 1
     for i in range(n - 1):
-        if ring.is_zero(T.data[i][i]):
+        if ring.is_zero(T.data[i, i]):
             idx_k = i
             break
 
@@ -415,8 +406,8 @@ def _step5_to_8_gcd_chain(
 
     # Step 5 (Storjohann 7.3): Eliminate entries below ``idx_k`` in last column.
     for t in range(idx_k + 1, n):
-        pivot_val = T.data[idx_k][last_col]
-        target_val = T.data[t][last_col]
+        pivot_val = T.data[idx_k, last_col]
+        target_val = T.data[t, last_col]
 
         if ring.is_zero(target_val):
             continue
@@ -435,10 +426,10 @@ def _step5_to_8_gcd_chain(
         # Swap columns ``idx_k`` and ``last_col`` in the identity to build the
         # right multiplication matrix.
 
-        P_swap.data[idx_k][idx_k] = 0
-        P_swap.data[last_col][last_col] = 0
-        P_swap.data[idx_k][last_col] = 1
-        P_swap.data[last_col][idx_k] = 1
+        P_swap.data[idx_k, idx_k] = 0
+        P_swap.data[last_col, last_col] = 0
+        P_swap.data[idx_k, last_col] = 1
+        P_swap.data[last_col, idx_k] = 1
 
         T = T @ P_swap
         V = V @ P_swap
@@ -447,13 +438,13 @@ def _step5_to_8_gcd_chain(
     col_target = idx_k
 
     for i in range(idx_k - 1, -1, -1):
-        a_ik = T.data[i][col_target]
-        a_i1k = T.data[i + 1][col_target]
-        a_ii = T.data[i][i]  # The diagonal element s_i
+        a_ik = T.data[i, col_target]
+        a_i1k = T.data[i + 1, col_target]
+        a_ii = T.data[i, i]  # The diagonal element s_i
 
         c = ring.stab(a_ik, a_i1k, a_ii)
 
-        s_next = T.data[i + 1][i + 1]
+        s_next = T.data[i + 1, i + 1]
         numerator = ring.mul(c, s_next)
         q_raw = ring.quo(numerator, a_ii)
         q = (-q_raw) % ring.N
@@ -464,21 +455,21 @@ def _step5_to_8_gcd_chain(
 
         # Operation 2: Add ``q * Col[i]`` to ``Col[i+1]`` via right transform.
         for r in range(n):
-            val_i = T.data[r][i]
-            val_ip1 = T.data[r][i + 1]
-            T.data[r][i + 1] = ring.add(val_ip1, ring.mul(q, val_i))
+            val_i = T.data[r, i]
+            val_ip1 = T.data[r, i + 1]
+            T.data[r, i + 1] = ring.add(val_ip1, ring.mul(q, val_i))
 
         # Update V with the same column operation.
         for r in range(n):
-            val_i = V.data[r][i]
-            val_ip1 = V.data[r][i + 1]
-            V.data[r][i + 1] = ring.add(val_ip1, ring.mul(q, val_i))
+            val_i = V.data[r, i]
+            val_ip1 = V.data[r, i + 1]
+            V.data[r, i + 1] = ring.add(val_ip1, ring.mul(q, val_i))
 
     # Step 8 (Storjohann 7.3): Run the gcd reduction loop (ripple down).
 
     for i in range(idx_k):
-        pivot = T.data[i][i]
-        target = T.data[i][col_target]  # col_target is idx_k
+        pivot = T.data[i, i]
+        target = T.data[i, col_target]  # col_target is idx_k
 
         if ring.is_zero(target):
             continue
@@ -486,16 +477,16 @@ def _step5_to_8_gcd_chain(
         g, s, t, u, v = ring.gcdex(pivot, target)
 
         for r in range(n):
-            ci = T.data[r][i]
-            ck = T.data[r][col_target]
+            ci = T.data[r, i]
+            ck = T.data[r, col_target]
 
-            T.data[r][i] = ring.add(ring.mul(s, ci), ring.mul(t, ck))
-            T.data[r][col_target] = ring.add(ring.mul(u, ci), ring.mul(v, ck))
+            T.data[r, i] = ring.add(ring.mul(s, ci), ring.mul(t, ck))
+            T.data[r, col_target] = ring.add(ring.mul(u, ci), ring.mul(v, ck))
 
-            vi = V.data[r][i]
-            vk = V.data[r][col_target]
-            V.data[r][i] = ring.add(ring.mul(s, vi), ring.mul(t, vk))
-            V.data[r][col_target] = ring.add(ring.mul(u, vi), ring.mul(v, vk))
+            vi = V.data[r, i]
+            vk = V.data[r, col_target]
+            V.data[r, i] = ring.add(ring.mul(s, vi), ring.mul(t, vk))
+            V.data[r, col_target] = ring.add(ring.mul(u, vi), ring.mul(v, vk))
 
     # Return idx_k + 1 (1-based) to match paper's "k" for Step 9
     return U, V, T, (idx_k + 1)
@@ -520,13 +511,13 @@ def _step9_index_reduction(
     idx_k = k - 1
 
     # Build ``P`` that reverses the first ``k`` indices.
-    P_data = [[0 for _ in range(n)] for _ in range(n)]
+    P_arr = np.zeros((n, n), dtype=int)
     for i in range(n):
         if i <= idx_k:
-            P_data[i][idx_k - i] = 1
+            P_arr[i, idx_k - i] = 1
         else:
-            P_data[i][i] = 1
-    P = RingMatrix(ring, P_data)
+            P_arr[i, i] = 1
+    P = RingMatrix._from_ndarray(ring, P_arr)
 
     # Conjugate by ``P`` to move the dense block to the top-left.
     A_perm = P @ A @ P

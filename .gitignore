@@ -4,6 +4,8 @@ __pycache__/
 
 # Testing
 .pytest_cache/
+.coverage
+htmlcov/
 
 # Distribution / Packaging
 dist/
@@ -12,6 +14,10 @@ build/
 
 # IDEs
 .vscode/
+
+# Tools
+.ruff_cache/
+.claude/
 
 # Environments
 .venv/

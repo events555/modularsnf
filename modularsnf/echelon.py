@@ -50,8 +50,8 @@ def lemma_3_1(A: RingMatrix) -> Tuple[RingMatrix, RingMatrix, int]:
 
         # Eliminate entries below row r in column k.
         for i in range(r + 1, n_rows):
-            a = T.data[r][k]
-            b = T.data[i][k]
+            a = T.data[r, k]
+            b = T.data[i, k]
 
             if ring.is_zero(b):
                 continue
@@ -64,13 +64,15 @@ def lemma_3_1(A: RingMatrix) -> Tuple[RingMatrix, RingMatrix, int]:
             U.apply_row_2x2(r, i, s, t, u, v)
 
         # If the pivot is nonzero, lock this row and move down.
-        if not ring.is_zero(T.data[r][k]):
+        if not ring.is_zero(T.data[r, k]):
             r += 1
 
     return U, T, r
 
 
-def index1_reduce_on_columns(A: RingMatrix, k: int) -> Tuple[RingMatrix, RingMatrix]:
+def index1_reduce_on_columns(
+    A: RingMatrix, k: int
+) -> Tuple[RingMatrix, RingMatrix]:
     """Perform specialized index-1 reduction on the first ``k`` columns.
 
     This routine targets the "index-1" case from section 7.3 (step 9) of
@@ -94,9 +96,9 @@ def index1_reduce_on_columns(A: RingMatrix, k: int) -> Tuple[RingMatrix, RingMat
     T = A.copy()
 
     for j in range(1, k):
-        sj = T.data[j][j]
+        sj = T.data[j, j]
         for i in range(j):
-            x = T.data[i][j]
+            x = T.data[i, j]
             if ring.is_zero(x):
                 continue
             phi = (-ring.quo(x, sj)) % ring.N
