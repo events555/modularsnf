@@ -6,10 +6,6 @@ It implements the Lemmas and subsequent subroutines that are necessary for calcu
 
 It validates against SymPy using a known equivalence between calculating the Smith Normal form of an integer matrix, and then taking mod N, compared to solving it natively in the ring.
 
-The algorithm has two main phases:
-1. **Band Reduction:** Transforming an arbitrary matrix into an upper bi-diagonal (2-banded) matrix.
-2. **Diagonalization:** Transforming the bi-diagonal matrix into the canonical Smith Normal Form.
-
 ## Quick Start
 
 ```python
@@ -47,6 +43,10 @@ U, V, S = smith_normal_form(A)   # note: (U, V, S) order
 ```
 
 ## Mathematical Foundation
+
+The algorithm has two main phases:
+1. **Band Reduction:** Transforming an arbitrary matrix into an upper bi-diagonal (2-banded) matrix.
+2. **Diagonalization:** Transforming the bi-diagonal matrix into the canonical Smith Normal Form.
 
 The algorithm operates over the Principal Ideal Ring $R = \mathbb{Z}/N\mathbb{Z}$. Since $R$ is not a field, we rely on unimodular transformations rather than simple Gaussian elimination.
 
