@@ -1,6 +1,9 @@
 """Helpers for diagonalizing matrices into Smith normal form."""
 
 from typing import Tuple
+
+import numpy as np
+
 from modularsnf.matrix import RingMatrix
 from modularsnf.ring import RingZModN
 
@@ -18,7 +21,7 @@ def _is_zero_matrix(M: RingMatrix) -> bool:
 
     if M.nrows == 0 or M.ncols == 0:
         return True
-    return M.ring.is_zero(M.data[0][0])
+    return M.ring.is_zero(M.data[0, 0])
 
 
 def _get_rank(M: RingMatrix) -> int:
@@ -35,7 +38,7 @@ def _get_rank(M: RingMatrix) -> int:
     rank = 0
     diag_len = min(M.nrows, M.ncols)
     for i in range(diag_len):
-        if not M.ring.is_zero(M.data[i][i]):
+        if not M.ring.is_zero(M.data[i, i]):
             rank += 1
     return rank
 
@@ -159,8 +162,8 @@ def merge_smith_blocks(
         return I0, I0, I0
 
     if n == 1:
-        a = A.data[0][0]
-        b = B.data[0][0]
+        a = A.data[0, 0]
+        b = B.data[0, 0]
         return _merge_scalars(a, b, ring)
 
     t = n // 2
@@ -220,21 +223,22 @@ def merge_smith_blocks(
         if r_B1 < t:
             r_B2 = _get_rank(B2)
 
-            P_loc = RingMatrix(ring, [[0 for _ in range(2 * t)] for _ in range(2 * t)])
-            one = 1
+            P_arr = np.zeros((2 * t, 2 * t), dtype=int)
 
             for i in range(r_B1):
-                P_loc.data[i][i] = one
+                P_arr[i, i] = 1
             for i in range(r_B2):
-                P_loc.data[r_B1 + i][t + i] = one
+                P_arr[r_B1 + i, t + i] = 1
 
             current_row = r_B1 + r_B2
             for i in range(t - r_B1):
-                P_loc.data[current_row][r_B1 + i] = one
+                P_arr[current_row, r_B1 + i] = 1
                 current_row += 1
             for i in range(t - r_B2):
-                P_loc.data[current_row][t + r_B2 + i] = one
+                P_arr[current_row, t + r_B2 + i] = 1
                 current_row += 1
+
+            P_loc = RingMatrix._from_ndarray(ring, P_arr)
 
             P_glob = RingMatrix.identity(ring, N)
             P_glob.write_block(n, n, P_loc)
@@ -274,7 +278,7 @@ def _merge_scalars(
 
     if ring.is_zero(g):
         I2 = RingMatrix.identity(ring, 2)
-        Z2 = RingMatrix(ring, [[0, 0], [0, 0]])
+        Z2 = RingMatrix._from_ndarray(ring, np.zeros((2, 2), dtype=int))
         return I2, I2, Z2
 
     tb = ring.mul(t, b)
