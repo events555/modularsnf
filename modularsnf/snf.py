@@ -1,12 +1,98 @@
 """Utilities for computing Smith normal forms over modular rings."""
 
-from typing import Tuple
+from typing import NamedTuple, Tuple
 
 from modularsnf.band import band_reduction, compute_upper_bandwidth
 from .matrix import RingMatrix
 from .ring import RingZModN
 from .diagonal import smith_from_diagonal
 from .echelon import index1_reduce_on_columns, lemma_3_1
+
+
+class SNFResult(NamedTuple):
+    """Result of a Smith Normal Form decomposition over Z/NZ.
+
+    Attributes:
+        S: The Smith Normal Form (diagonal matrix) as nested lists.
+        U: Left unimodular transform as nested lists.
+        V: Right unimodular transform as nested lists.
+
+    The invariant ``S = U @ A @ V`` holds over Z/NZ, where ``@``
+    denotes matrix multiplication modulo N.
+    """
+
+    S: list[list[int]]
+    U: list[list[int]]
+    V: list[list[int]]
+
+
+def smith_normal_form_mod(
+    matrix: list[list[int]],
+    modulus: int,
+) -> SNFResult:
+    """Compute the Smith Normal Form of an integer matrix over Z/NZ.
+
+    This is the primary user-facing entry point.  Given a matrix of
+    integers and a modulus *N*, the function returns the decomposition
+    ``S = U @ A @ V`` (mod *N*) where *S* is diagonal with the
+    invariant-factor divisibility chain ``s_i | s_{i+1}`` and *U*, *V*
+    are unimodular over Z/NZ.
+
+    The return order ``(S, U, V)`` — diagonal form first — follows the
+    dominant convention used by SymPy (``smith_normal_decomp``) and
+    SageMath (``smith_form``).
+
+    Args:
+        matrix: A 2-D list of integers representing the input matrix.
+            May be rectangular; empty inputs (``[]``) are accepted.
+        modulus: A positive integer *N* >= 2 defining the ring Z/NZ.
+
+    Returns:
+        An :class:`SNFResult` ``(S, U, V)`` of plain Python integer
+        lists satisfying ``S = U @ A @ V`` (mod *N*).
+
+    Raises:
+        ValueError: If *modulus* < 2 or if *matrix* rows have unequal
+            lengths (ragged input).
+        TypeError: If *matrix* is not a list of lists.
+
+    Examples:
+        >>> from modularsnf import smith_normal_form_mod
+        >>> S, U, V = smith_normal_form_mod([[2, 4], [6, 8]], modulus=12)
+    """
+    if not isinstance(modulus, int) or modulus < 2:
+        raise ValueError(
+            f"Modulus must be an integer >= 2, got {modulus!r}"
+        )
+
+    if not isinstance(matrix, (list, tuple)):
+        raise TypeError(
+            "matrix must be a list of lists of integers"
+        )
+
+    # Empty matrix — return empty lists immediately.
+    if len(matrix) == 0:
+        return SNFResult(S=[], U=[], V=[])
+
+    # Validate that all rows have the same length.
+    ncols = len(matrix[0])
+    for i, row in enumerate(matrix):
+        if len(row) != ncols:
+            raise ValueError(
+                f"Ragged matrix: row 0 has {ncols} columns "
+                f"but row {i} has {len(row)} columns"
+            )
+
+    ring = RingZModN(modulus)
+    A = RingMatrix(ring, matrix)
+
+    U_rm, V_rm, S_rm = smith_normal_form(A)
+
+    return SNFResult(
+        S=S_rm.data.tolist(),
+        U=U_rm.data.tolist(),
+        V=V_rm.data.tolist(),
+    )
 
 
 def smith_normal_form(

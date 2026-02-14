@@ -10,6 +10,115 @@ The algorithm has two main phases:
 1. **Band Reduction:** Transforming an arbitrary matrix into an upper bi-diagonal (2-banded) matrix.
 2. **Diagonalization:** Transforming the bi-diagonal matrix into the canonical Smith Normal Form.
 
+## Quick Start
+
+Install and import the single entry-point function:
+
+```python
+from modularsnf import smith_normal_form_mod
+```
+
+### Square matrix over a composite modulus
+
+```python
+from modularsnf import smith_normal_form_mod
+
+A = [[2, 4, 0],
+     [6, 8, 3],
+     [0, 3, 9]]
+
+S, U, V = smith_normal_form_mod(A, modulus=36)
+
+# S is the diagonal Smith Normal Form, U and V are unimodular transforms.
+# The core invariant: S = U @ A @ V (mod 36).
+```
+
+The return order `(S, U, V)` — diagonal form first — matches the
+convention used by SymPy (`smith_normal_decomp`) and SageMath
+(`smith_form`).
+
+### Verifying structural properties
+
+Rather than checking exact values (the transforms `U` and `V` are not
+unique), verify the mathematical invariants:
+
+```python
+import numpy as np
+from modularsnf import smith_normal_form_mod
+
+A = [[2, 4], [6, 8]]
+N = 12
+S, U, V = smith_normal_form_mod(A, modulus=N)
+
+S, U, V = np.array(S), np.array(U), np.array(V)
+A = np.array(A)
+
+# 1. Transform equation: S = U @ A @ V (mod N)
+assert np.array_equal(S, (U @ A @ V) % N)
+
+# 2. Diagonal structure: all off-diagonal entries are zero.
+for i in range(S.shape[0]):
+    for j in range(S.shape[1]):
+        if i != j:
+            assert S[i][j] == 0
+
+# 3. Divisibility chain: gcd(s_i, N) divides gcd(s_{i+1}, N).
+from math import gcd
+diag = [int(S[i][i]) for i in range(min(S.shape))]
+for i in range(len(diag) - 1):
+    assert gcd(diag[i], N) % gcd(diag[i + 1], N) == 0 or gcd(diag[i], N) == 0
+```
+
+### Rectangular matrices
+
+Rectangular inputs are handled automatically — the matrix is internally
+padded to square, reduced, and the result is cropped back:
+
+```python
+S, U, V = smith_normal_form_mod([[1, 2, 3], [4, 5, 6]], modulus=10)
+# S is 2x3, U is 2x2, V is 3x3.
+```
+
+### Edge cases
+
+```python
+# 0x0 (empty matrix)
+S, U, V = smith_normal_form_mod([], modulus=7)
+assert S == [] and U == [] and V == []
+
+# 1x1
+S, U, V = smith_normal_form_mod([[5]], modulus=12)
+# The lone diagonal entry generates the same ideal as gcd(5, 12).
+# Verify: gcd(S[0][0], 12) == gcd(5, 12).
+
+# All-zero matrix
+S, U, V = smith_normal_form_mod([[0, 0], [0, 0]], modulus=6)
+# S is all zeros; U and V are identity.
+```
+
+### Unimodularity over Z/NZ
+
+A matrix $M$ is **unimodular** over $\mathbb{Z}/N\mathbb{Z}$ when its
+determinant is a *unit* in the ring — that is,
+$\gcd(\det(M),\, N) = 1$. Both transform matrices $U$ and $V$ returned
+by `smith_normal_form_mod` satisfy this property. This is the modular
+analogue of the integer requirement that $|\det(U)| = 1$.
+
+### Advanced usage
+
+For users who need `RingMatrix` objects instead of plain lists (e.g. to
+compose with other ring operations), the lower-level API is available:
+
+```python
+from modularsnf.ring import RingZModN
+from modularsnf.matrix import RingMatrix
+from modularsnf.snf import smith_normal_form
+
+ring = RingZModN(12)
+A = RingMatrix(ring, [[2, 4], [6, 8]])
+U, V, S = smith_normal_form(A)   # note: returns (U, V, S) order
+```
+
 ## Mathematical Foundation
 
 The algorithm operates over the Principal Ideal Ring $R = \mathbb{Z}/N\mathbb{Z}$. Since $R$ is not a field, we rely on unimodular transformations rather than simple Gaussian elimination.
