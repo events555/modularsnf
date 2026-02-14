@@ -37,7 +37,7 @@ Use `modularsnf.ring` primitives: `gcdex`, `div`, `quo`, `stab`, `ann`.
 * Structural assertions (`S = U A V`, diagonal shape, divisibility chain,
   unimodularity) over hardcoded array equality.
 * Validate against SymPy integer-domain projection where feasible.
-* Run `uv run pytest` and `uv run ruff check .` before finalizing.
+* Run `just check` (or individually: `just lint`, `just typecheck`, `just test`) before finalizing.
 
 ## File Structure
 
