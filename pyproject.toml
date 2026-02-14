@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,13 +7,14 @@ name = "modularsnf"
 version = "0.1.0"
 description = "A Python module for Smith Normal Form calculations over Z/N rings"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
-dependencies = ["numpy"]
+dependencies = ["numpy>=1.22"]
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-cov", "sympy"]
@@ -26,6 +27,9 @@ testpaths = [
     "tests",
 ]
 markers = ["perf: performance sanity checks (run with: uv run pytest -m perf)"]
+
+[tool.setuptools.packages.find]
+include = ["modularsnf*"]
 
 [tool.ruff]
 line-length = 80
