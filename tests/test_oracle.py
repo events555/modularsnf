@@ -141,7 +141,6 @@ class TestOracleInternal:
         ring = RingZModN(N)
         nrows, ncols = shape
         A = _make_random_matrix(ring, nrows, ncols)
-        n_diag = min(nrows, ncols)
 
         # SymPy oracle: integer-domain SNF -> project to Z/N
         A_sym = A.to_sympy()
