@@ -7,7 +7,7 @@ name = "modularsnf"
 version = "0.1.0"
 description = "A Python module for Smith Normal Form calculations over Z/N rings"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -17,6 +17,7 @@ dependencies = ["numpy"]
 
 [project.optional-dependencies]
 test = ["pytest"]
+dev = ["pytest", "ruff"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
@@ -24,3 +25,13 @@ addopts = "-ra -q"
 testpaths = [
     "tests",
 ]
+
+[tool.ruff]
+line-length = 80
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["F", "E9"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/test_snf.py" = ["F401"]

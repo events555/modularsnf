@@ -186,10 +186,8 @@ class RingMatrix:
         if self.ring is not other.ring:
             raise ValueError("Cannot multiply matrices over different rings")
 
-        rA = len(self.data)
         cA = self.ncols
         rB = other.nrows
-        cB = other.ncols
 
         if cA != rB:
             raise ValueError(f"Dimension mismatch: {cA} != {rB}")
@@ -219,7 +217,7 @@ class RingMatrix:
             return self.copy()
         size = 1 << (n - 1).bit_length()
         return self.pad_to(size, size)
-    
+
     def submatrix(self, row_start: int, row_end: int,
                   col_start: int, col_end: int) -> "RingMatrix":
         """

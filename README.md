@@ -78,3 +78,26 @@ We have implemented the full pipeline to reach **Lemma 7.14** (Square SNF):
 * **Echelon Forms (`modularsnf.echelon`)**: Implemented **Lemma 3.1** for recursive column clearing.
 * **Band Reduction (`modularsnf.snf`)**: Implemented **Lemma 7.3** (`Triang`) and **Lemma 7.4** (`Shift`) to reduce matrix bandwidth.
 * **Diagonalization (`modularsnf.diagonal`)**: Implemented **Proposition 7.7** and **Theorem 7.11** to sort diagonal entries by divisibility.
+
+## Development Workflow (modern Python)
+
+This repository supports both standard `pip` workflows and `uv` workflows.
+
+### Using uv
+
+```bash
+uv venv
+uv sync --extra dev
+uv run pytest
+uv run ruff check .
+```
+
+### Using pip
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .[dev]
+pytest
+ruff check .
+```
