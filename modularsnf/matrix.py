@@ -4,14 +4,17 @@ Defines the ``RingMatrix`` dataclass and helpers that normalize data, manage
 block operations, and align shapes for modular arithmetic workflows.
 """
 
-from dataclasses import dataclass, field
-from typing import List, Tuple, Union
+from dataclasses import InitVar, dataclass, field
+from typing import List, Tuple
 
 import numpy as np
 
 from modularsnf.ring import RingZModN
 
-def _normalize_matrix_data(data: Union[List[List[int]], np.ndarray]) -> np.ndarray:
+
+def _normalize_matrix_data(
+    data: list[list[int]] | np.ndarray,
+) -> np.ndarray:
     """
     Ensure matrix-like input is a 2D ``np.ndarray`` of ints.
 
@@ -70,7 +73,9 @@ def _is_within_modulus(data: np.ndarray, N: int) -> bool:
     return 0 <= min_val and max_val < N
 
 
-def _to_list_if_array(data: Union[List[List[int]], np.ndarray]) -> List[List[int]]:
+def _to_list_if_array(
+    data: list[list[int]] | np.ndarray,
+) -> list[list[int]]:
     """Return nested Python lists, preserving list inputs for callers that expect them."""
     if isinstance(data, np.ndarray):
         return data.tolist()
@@ -80,11 +85,12 @@ def _to_list_if_array(data: Union[List[List[int]], np.ndarray]) -> List[List[int
 @dataclass
 class RingMatrix:
     ring: RingZModN
-    data: np.ndarray
+    _data_init: InitVar[list[list[int]] | np.ndarray]
+    data: np.ndarray = field(init=False)
     _assume_reduced: bool = field(default=False, init=True, repr=False)
 
-    def __post_init__(self):
-        self.data = _normalize_matrix_data(self.data)
+    def __post_init__(self, _data_init: list[list[int]] | np.ndarray) -> None:
+        self.data = _normalize_matrix_data(_data_init)
         N = self.ring.N
 
         # Fast path: internal callers that explicitly guarantee the array is
@@ -118,7 +124,7 @@ class RingMatrix:
 
     @classmethod
     def from_rows(cls, ring: RingZModN, rows: List[List[int]]) -> "RingMatrix":
-        return cls(ring=ring, data=rows)
+        return cls(ring, rows)
 
     @classmethod
     def identity(cls, ring: RingZModN, n: int) -> "RingMatrix":
@@ -218,8 +224,9 @@ class RingMatrix:
         size = 1 << (n - 1).bit_length()
         return self.pad_to(size, size)
 
-    def submatrix(self, row_start: int, row_end: int,
-                  col_start: int, col_end: int) -> "RingMatrix":
+    def submatrix(
+        self, row_start: int, row_end: int, col_start: int, col_end: int
+    ) -> "RingMatrix":
         """
         Return a view copy of rows [row_start:row_end) and
         cols [col_start:col_end).
@@ -227,8 +234,9 @@ class RingMatrix:
         rows = self.data[row_start:row_end, col_start:col_end]
         return RingMatrix._from_ndarray(self.ring, np.copy(rows))
 
-    def write_block(self, row_start: int, col_start: int,
-                    block: "RingMatrix") -> None:
+    def write_block(
+        self, row_start: int, col_start: int, block: "RingMatrix"
+    ) -> None:
         """
         Overwrite a sub-block of self starting at (row_start, col_start)
         with the contents of 'block'. Rings must match.
@@ -236,10 +244,13 @@ class RingMatrix:
         if self.ring is not block.ring:
             raise ValueError("Cannot write block with different ring")
         b_rows, b_cols = block.shape
-        self.data[row_start:row_start + b_rows, col_start:col_start + b_cols] = block.data
+        self.data[
+            row_start : row_start + b_rows, col_start : col_start + b_cols
+        ] = block.data
 
-
-    def apply_row_2x2(self, r: int, i: int, s: int, t: int, u: int, v: int) -> None:
+    def apply_row_2x2(
+        self, r: int, i: int, s: int, t: int, u: int, v: int
+    ) -> None:
         """In-place:  [row_r; row_i] <- [s t; u v] [row_r; row_i]."""
         N = self.ring.N
         rows = self.data[[r, i], :]
@@ -250,8 +261,10 @@ class RingMatrix:
 
     def to_sympy(self):
         import sympy as sp
+
         return sp.Matrix(_to_list_if_array(self.data))
 
     def pprint(self):
         from sympy import pprint
+
         pprint(self.to_sympy())
