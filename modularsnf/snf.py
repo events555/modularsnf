@@ -32,32 +32,20 @@ def smith_normal_form_mod(
 ) -> SNFResult:
     """Compute the Smith Normal Form of an integer matrix over Z/NZ.
 
-    This is the primary user-facing entry point.  Given a matrix of
-    integers and a modulus *N*, the function returns the decomposition
-    ``S = U @ A @ V`` (mod *N*) where *S* is diagonal with the
-    invariant-factor divisibility chain ``s_i | s_{i+1}`` and *U*, *V*
-    are unimodular over Z/NZ.
-
-    The return order ``(S, U, V)`` — diagonal form first — follows the
-    dominant convention used by SymPy (``smith_normal_decomp``) and
-    SageMath (``smith_form``).
+    Returns ``(S, U, V)`` where ``S = U @ A @ V`` (mod *modulus*),
+    *S* is diagonal with the divisibility chain ``s_i | s_{i+1}``,
+    and *U*, *V* are unimodular.  All three are plain Python
+    ``list[list[int]]``.
 
     Args:
-        matrix: A 2-D list of integers representing the input matrix.
-            May be rectangular; empty inputs (``[]``) are accepted.
-        modulus: A positive integer *N* >= 2 defining the ring Z/NZ.
-
-    Returns:
-        An :class:`SNFResult` ``(S, U, V)`` of plain Python integer
-        lists satisfying ``S = U @ A @ V`` (mod *N*).
+        matrix: 2-D list of integers.  May be rectangular.
+        modulus: Integer *N* >= 2 defining the ring Z/NZ.
 
     Raises:
-        ValueError: If *modulus* < 2 or if *matrix* rows have unequal
-            lengths (ragged input).
+        ValueError: If *modulus* < 2 or rows have unequal lengths.
         TypeError: If *matrix* is not a list of lists.
 
     Examples:
-        >>> from modularsnf import smith_normal_form_mod
         >>> S, U, V = smith_normal_form_mod([[2, 4], [6, 8]], modulus=12)
     """
     if not isinstance(modulus, int) or modulus < 2:
