@@ -18,7 +18,7 @@ dependencies = ["numpy>=1.22"]
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-cov", "sympy"]
-dev = ["pytest", "pytest-cov", "ruff", "basedpyright", "sympy"]
+dev = ["pytest", "pytest-cov", "ruff", "ty", "sympy"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
