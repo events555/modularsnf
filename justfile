@@ -5,7 +5,7 @@ lint:
     uv run ruff check .
 
 typecheck:
-    uv run basedpyright modularsnf/
+    uv run ty check modularsnf/
 
 test:
     uv run pytest tests/ -x
