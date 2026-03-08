@@ -1,10 +1,10 @@
 [build-system]
-requires = ["maturin>=1.0,<2"]
+requires = ["maturin>=1.7,<2"]
 build-backend = "maturin"
 
 [project]
 name = "modularsnf"
-version = "0.1.0"
+version = "0.2.0"
 description = "A Python module for Smith Normal Form calculations over Z/N rings"
 readme = "README.md"
 license = "MIT"
@@ -18,7 +18,7 @@ dependencies = ["numpy>=1.22"]
 
 [project.optional-dependencies]
 test = ["pytest", "pytest-cov", "sympy"]
-dev = ["pytest", "pytest-cov", "ruff", "ty", "sympy"]
+dev = ["maturin>=1.7,<2", "pytest", "pytest-cov", "ruff", "ty", "sympy"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
@@ -29,8 +29,8 @@ testpaths = [
 markers = ["perf: performance sanity checks (run with: uv run pytest -m perf)"]
 
 [tool.maturin]
-features = ["pyo3/extension-module"]
 module-name = "modularsnf._rust"
+compatibility = "manylinux2014"
 
 [tool.ruff]
 line-length = 80
