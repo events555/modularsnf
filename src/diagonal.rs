@@ -50,18 +50,29 @@ fn merge_scalars(a: i64, b: i64, ring: &RustRingZModN) -> (Array2<i64>, Array2<i
 }
 
 /// Matrix multiply with mod reduction. C = (A @ B) % n.
+///
+/// Uses row-major iteration with slices to avoid per-element bounds checks.
+/// Cannot use BLAS (.dot()) because we need integer arithmetic with mod.
 fn matmul_mod(a: &Array2<i64>, b: &Array2<i64>, n: i64) -> Array2<i64> {
     let rows = a.nrows();
     let cols = b.ncols();
     let inner = a.ncols();
     let mut c = Array2::zeros((rows, cols));
     for i in 0..rows {
-        for j in 0..cols {
-            let mut sum: i64 = 0;
-            for k in 0..inner {
-                sum += a[[i, k]] * b[[k, j]];
+        let a_row = a.row(i);
+        let mut c_row = c.row_mut(i);
+        for k in 0..inner {
+            let a_ik = a_row[k];
+            if a_ik == 0 {
+                continue;
             }
-            c[[i, j]] = posmod(sum, n);
+            let b_row = b.row(k);
+            for j in 0..cols {
+                c_row[j] += a_ik * b_row[j];
+            }
+        }
+        for j in 0..cols {
+            c_row[j] = posmod(c_row[j], n);
         }
     }
     c
