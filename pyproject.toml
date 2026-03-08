@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=77.0.0"]
-build-backend = "setuptools.build_meta"
+requires = ["maturin>=1.0,<2"]
+build-backend = "maturin"
 
 [project]
 name = "modularsnf"
@@ -28,8 +28,9 @@ testpaths = [
 ]
 markers = ["perf: performance sanity checks (run with: uv run pytest -m perf)"]
 
-[tool.setuptools.packages.find]
-include = ["modularsnf*"]
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "modularsnf._rust"
 
 [tool.ruff]
 line-length = 80

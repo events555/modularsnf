@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import cProfile
 import functools
-import math
 import random
 import statistics
 import sys
