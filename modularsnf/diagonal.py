@@ -9,13 +9,14 @@ from modularsnf.ring import RingZModN
 
 try:
     from modularsnf._rust import (
-        rust_smith_from_diagonal as _rust_diag,
         rust_merge_smith_blocks as _rust_merge,
+    )
+    from modularsnf._rust import (
+        rust_smith_from_diagonal as _rust_diag,
     )
 except ImportError:
     _rust_diag = None  # type: ignore[assignment]
     _rust_merge = None  # type: ignore[assignment]
-
 
 
 def smith_from_diagonal(
@@ -50,7 +51,8 @@ def smith_from_diagonal(
 
     if _rust_diag is not None:
         u_arr, v_arr, s_arr = _rust_diag(
-            D.data.astype(np.int64), ring.N,
+            D.data.astype(np.int64),
+            ring.N,
         )
         return (
             RingMatrix._from_ndarray(ring, u_arr[:n, :n].copy()),
@@ -71,7 +73,6 @@ def smith_from_diagonal(
     S = RingMatrix._from_ndarray(ring, S_arr[:n, :n].copy())
 
     return U, V, S
-
 
 
 def merge_smith_blocks(
@@ -217,7 +218,9 @@ def _merge_raw(
         return e, e, e
 
     if n == 1:
-        u2, v2, s2 = _merge_scalars_raw(int(a_arr[0, 0]), int(b_arr[0, 0]), ring)
+        u2, v2, s2 = _merge_scalars_raw(
+            int(a_arr[0, 0]), int(b_arr[0, 0]), ring
+        )
         return u2, v2, s2
 
     t = n // 2
@@ -240,22 +243,30 @@ def _merge_raw(
         u_loc, v_loc, s_loc = _merge_raw(block1, block2, ring)
 
         b1_prime = s_loc[0:t, 0:t].copy()
-        b2_prime = s_loc[t:2 * t, t:2 * t].copy()
+        b2_prime = s_loc[t : 2 * t, t : 2 * t].copy()
 
         s1 = index_map[idx1]
         s2_ = index_map[idx2]
 
         # Left-apply U_loc block pair to U_total
-        r1 = U_total[s1:s1 + t, :].copy()
-        r2 = U_total[s2_:s2_ + t, :].copy()
-        U_total[s1:s1 + t, :] = (u_loc[0:t, 0:t] @ r1 + u_loc[0:t, t:2 * t] @ r2) % N
-        U_total[s2_:s2_ + t, :] = (u_loc[t:2 * t, 0:t] @ r1 + u_loc[t:2 * t, t:2 * t] @ r2) % N
+        r1 = U_total[s1 : s1 + t, :].copy()
+        r2 = U_total[s2_ : s2_ + t, :].copy()
+        U_total[s1 : s1 + t, :] = (
+            u_loc[0:t, 0:t] @ r1 + u_loc[0:t, t : 2 * t] @ r2
+        ) % N
+        U_total[s2_ : s2_ + t, :] = (
+            u_loc[t : 2 * t, 0:t] @ r1 + u_loc[t : 2 * t, t : 2 * t] @ r2
+        ) % N
 
         # Right-apply V_loc block pair to V_total
-        c1 = V_total[:, s1:s1 + t].copy()
-        c2 = V_total[:, s2_:s2_ + t].copy()
-        V_total[:, s1:s1 + t] = (c1 @ v_loc[0:t, 0:t] + c2 @ v_loc[t:2 * t, 0:t]) % N
-        V_total[:, s2_:s2_ + t] = (c1 @ v_loc[0:t, t:2 * t] + c2 @ v_loc[t:2 * t, t:2 * t]) % N
+        c1 = V_total[:, s1 : s1 + t].copy()
+        c2 = V_total[:, s2_ : s2_ + t].copy()
+        V_total[:, s1 : s1 + t] = (
+            c1 @ v_loc[0:t, 0:t] + c2 @ v_loc[t : 2 * t, 0:t]
+        ) % N
+        V_total[:, s2_ : s2_ + t] = (
+            c1 @ v_loc[0:t, t : 2 * t] + c2 @ v_loc[t : 2 * t, t : 2 * t]
+        ) % N
 
         return b1_prime, b2_prime
 
@@ -285,7 +296,7 @@ def _merge_raw(
 
             # Build P_glob as identity with P_arr at (n, n)
             P_glob = np.eye(NN, dtype=int)
-            P_glob[n:n + 2 * t, n:n + 2 * t] = P_arr
+            P_glob[n : n + 2 * t, n : n + 2 * t] = P_arr
             P_glob_T = P_glob.T.copy()
 
             U_total = (P_glob @ U_total) % N
@@ -294,17 +305,17 @@ def _merge_raw(
             # Combine B1, B2 into block diag, permute
             B_comb = np.zeros((2 * t, 2 * t), dtype=int)
             B_comb[0:t, 0:t] = B1
-            B_comb[t:2 * t, t:2 * t] = B2
+            B_comb[t : 2 * t, t : 2 * t] = B2
             S_target = (P_arr @ B_comb @ P_arr.T) % N
             B1 = S_target[0:t, 0:t].copy()
-            B2 = S_target[t:2 * t, t:2 * t].copy()
+            B2 = S_target[t : 2 * t, t : 2 * t].copy()
 
     # Assemble S_final as block_diag(A1, A2, B1, B2)
     S_final = np.zeros((NN, NN), dtype=int)
     S_final[0:t, 0:t] = A1
     S_final[t:n, t:n] = A2
-    S_final[n:n + t, n:n + t] = B1
-    S_final[n + t:NN, n + t:NN] = B2
+    S_final[n : n + t, n : n + t] = B1
+    S_final[n + t : NN, n + t : NN] = B2
 
     return U_total, V_total, S_final
 
@@ -331,8 +342,10 @@ def _smith_from_diagonal_raw(
     # Each element is (U, V, S) as raw arrays
     blocks = []
     for i in range(n):
-        s = diag_arr[i:i + 1, i:i + 1].copy()
-        blocks.append((np.ones((1, 1), dtype=int), np.ones((1, 1), dtype=int), s))
+        s = diag_arr[i : i + 1, i : i + 1].copy()
+        blocks.append(
+            (np.ones((1, 1), dtype=int), np.ones((1, 1), dtype=int), s)
+        )
 
     size = 1
     while size < n:
@@ -347,12 +360,12 @@ def _smith_from_diagonal_raw(
             bsz = size
             U_block = np.zeros((2 * bsz, 2 * bsz), dtype=int)
             U_block[0:bsz, 0:bsz] = U1
-            U_block[bsz:2 * bsz, bsz:2 * bsz] = U2
+            U_block[bsz : 2 * bsz, bsz : 2 * bsz] = U2
             U_total = (U_merge @ U_block) % N
 
             V_block = np.zeros((2 * bsz, 2 * bsz), dtype=int)
             V_block[0:bsz, 0:bsz] = V1
-            V_block[bsz:2 * bsz, bsz:2 * bsz] = V2
+            V_block[bsz : 2 * bsz, bsz : 2 * bsz] = V2
             V_total = (V_block @ V_merge) % N
 
             new_blocks.append((U_total, V_total, S))
