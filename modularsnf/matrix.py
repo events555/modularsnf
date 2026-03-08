@@ -259,6 +259,71 @@ class RingMatrix:
         self.data[r, :] = new_rows[0]
         self.data[i, :] = new_rows[1]
 
+    def left_apply_block(
+        self, block: np.ndarray, start: int
+    ) -> None:
+        """In-place ``self <- M @ self`` where ``M = I`` with *block* at ``(start, start)``.
+
+        Only rows ``[start:start+k]`` are modified (``k = block.shape[0]``).
+        """
+        N = self.ring.N
+        k = block.shape[0]
+        rows = self.data[start:start + k, :].copy()
+        self.data[start:start + k, :] = (block @ rows) % N
+
+    def right_apply_block(
+        self, block: np.ndarray, start: int
+    ) -> None:
+        """In-place ``self <- self @ M`` where ``M = I`` with *block* at ``(start, start)``.
+
+        Only columns ``[start:start+k]`` are modified.
+        """
+        N = self.ring.N
+        k = block.shape[0]
+        cols = self.data[:, start:start + k].copy()
+        self.data[:, start:start + k] = (cols @ block) % N
+
+    def left_apply_block_pair(
+        self,
+        u00: np.ndarray,
+        u01: np.ndarray,
+        u10: np.ndarray,
+        u11: np.ndarray,
+        start1: int,
+        start2: int,
+    ) -> None:
+        """In-place ``self <- M @ self`` where ``M = I`` with a 2x2 block arrangement.
+
+        ``M[start1:start1+t, start1:start1+t] = u00``, etc.
+        Only rows ``[start1:start1+t]`` and ``[start2:start2+t]`` change.
+        """
+        N = self.ring.N
+        t = u00.shape[0]
+        r1 = self.data[start1:start1 + t, :].copy()
+        r2 = self.data[start2:start2 + t, :].copy()
+        self.data[start1:start1 + t, :] = (u00 @ r1 + u01 @ r2) % N
+        self.data[start2:start2 + t, :] = (u10 @ r1 + u11 @ r2) % N
+
+    def right_apply_block_pair(
+        self,
+        v00: np.ndarray,
+        v01: np.ndarray,
+        v10: np.ndarray,
+        v11: np.ndarray,
+        start1: int,
+        start2: int,
+    ) -> None:
+        """In-place ``self <- self @ M`` where ``M = I`` with a 2x2 block arrangement.
+
+        Only columns ``[start1:start1+t]`` and ``[start2:start2+t]`` change.
+        """
+        N = self.ring.N
+        t = v00.shape[0]
+        c1 = self.data[:, start1:start1 + t].copy()
+        c2 = self.data[:, start2:start2 + t].copy()
+        self.data[:, start1:start1 + t] = (c1 @ v00 + c2 @ v10) % N
+        self.data[:, start2:start2 + t] = (c1 @ v01 + c2 @ v11) % N
+
     def to_sympy(self):
         import sympy as sp
 
