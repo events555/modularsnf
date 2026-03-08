@@ -132,9 +132,6 @@ def shift(C: RingMatrix, b: int) -> Tuple[RingMatrix, RingMatrix, RingMatrix]:
     return C_prime, U1, V_block
 
 
-# TODO: Implement band_reduction following Storjohann's BandReduction algorithm (see https://uwspace.uwaterloo.ca/items/b2a6ebc4-f0e2-40ab-93f1-7b5c7d4d1b7f).
-
-
 def band_reduction(
     A: RingMatrix,
     b: int,

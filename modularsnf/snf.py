@@ -115,7 +115,8 @@ def smith_normal_form(
 
     if _rust_snf is not None:
         u_arr, v_arr, s_arr = _rust_snf(
-            A.data.astype(np.int64), ring.N,
+            A.data.astype(np.int64),
+            ring.N,
         )
         return (
             RingMatrix._from_ndarray(ring, u_arr),
