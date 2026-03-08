@@ -21,6 +21,7 @@ build/
 
 # Profiling
 *.prof
+flamegraph_*.svg
 
 # Rust
 target/

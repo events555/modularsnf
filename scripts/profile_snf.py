@@ -11,6 +11,7 @@ Usage:
     python scripts/profile_snf.py --sizes 50,100,200        # custom sizes
     python scripts/profile_snf.py --modulus 1000             # large modulus
     python scripts/profile_snf.py --sizes 100 --cprofile     # dump .prof file
+    python scripts/profile_snf.py --sizes 100 --flamegraph   # py-spy flamegraph
 """
 
 from __future__ import annotations
@@ -19,7 +20,9 @@ import argparse
 import cProfile
 import functools
 import random
+import shutil
 import statistics
+import subprocess
 import sys
 import time
 import tracemalloc
@@ -251,10 +254,38 @@ def run_one(
 
     stats.peak_memory_bytes = peak
 
-    # Quick correctness check.
-    correct = np.array_equal((U @ A @ V).data, S.data)
+    correct = check_snf_correctness(A, U, V, S)
 
     return elapsed, correct
+
+
+def check_snf_correctness(
+    A: RingMatrix, U: RingMatrix, V: RingMatrix, S: RingMatrix
+) -> bool:
+    """Verify SNF result: factorization, diagonal form, and divisibility."""
+    N = A.ring.N
+    n = min(S.nrows, S.ncols)
+
+    # 1. Factorization: U @ A @ V == S
+    if not np.array_equal((U @ A @ V).data, S.data):
+        return False
+
+    # 2. S is diagonal
+    for i in range(S.nrows):
+        for j in range(S.ncols):
+            if i != j and S.data[i, j] % N != 0:
+                return False
+
+    # 3. Divisibility chain: s_i | s_{i+1} in Z/NZ
+    import math
+    for i in range(n - 1):
+        si = int(S.data[i, i]) % N
+        si1 = int(S.data[i + 1, i + 1]) % N
+        g = math.gcd(si, N)
+        if g != 0 and si1 % g != 0:
+            return False
+
+    return True
 
 
 # ===================================================================
@@ -449,6 +480,11 @@ def main() -> None:
         help="Dump a cProfile .prof file (only first size)",
     )
     parser.add_argument(
+        "--flamegraph",
+        action="store_true",
+        help="Generate a py-spy flamegraph SVG (includes native/Rust frames)",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=42,
@@ -459,6 +495,14 @@ def main() -> None:
     sizes = [int(s.strip()) for s in args.sizes.split(",")]
 
     print(f"Profiling SNF: sizes={sizes}, modulus={args.modulus}, seed={args.seed}")
+
+    # Detect backend
+    try:
+        from modularsnf._rust import rust_smith_normal_form  # noqa: F401
+        backend = "rust"
+    except ImportError:
+        backend = "python"
+    print(f"Backend: {backend}")
 
     # cProfile mode: just dump a .prof and exit.
     if args.cprofile:
@@ -474,6 +518,77 @@ def main() -> None:
         print(f"Saved to {outfile}")
         print("Explore with: python -m pstats " + outfile)
         print("  or: pip install snakeviz && snakeviz " + outfile)
+        return
+
+    # Flamegraph mode: spawn py-spy on a child process.
+    if args.flamegraph:
+        py_spy = shutil.which("py-spy")
+        if py_spy is None:
+            # Check in venv
+            venv_spy = Path(sys.prefix) / "bin" / "py-spy"
+            if venv_spy.exists():
+                py_spy = str(venv_spy)
+        if py_spy is None:
+            print("ERROR: py-spy not found. Install with: pip install py-spy")
+            sys.exit(1)
+
+        n = sizes[0]
+        outfile = f"flamegraph_n{n}_mod{args.modulus}.svg"
+        print(f"\nGenerating flamegraph for n={n}, modulus={args.modulus}...")
+        print(f"Using py-spy at: {py_spy}")
+
+        # Build a child script that runs enough iterations for py-spy
+        # to collect meaningful samples (target ~5 seconds).
+        child_script = f"""
+import sys, random, time
+sys.path.insert(0, {str(_repo)!r})
+from modularsnf.ring import RingZModN
+from modularsnf.matrix import RingMatrix
+from modularsnf.snf import smith_normal_form
+
+rng = random.Random({args.seed})
+ring = RingZModN({args.modulus})
+data = [[rng.randint(0, {args.modulus - 1}) for _ in range({n})] for _ in range({n})]
+A = RingMatrix.from_rows(ring, data)
+
+# Warmup
+smith_normal_form(A)
+
+# Time one run to estimate iterations needed
+t0 = time.perf_counter()
+smith_normal_form(A)
+dt = time.perf_counter() - t0
+
+iters = max(1, int(5.0 / max(dt, 1e-6)))
+print(f"Running {{iters}} iterations ({{dt*1000:.1f}}ms each)...", flush=True)
+for _ in range(iters):
+    smith_normal_form(A)
+"""
+        # Write to temp file so py-spy can track it properly.
+        import tempfile
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False,
+        ) as f:
+            f.write(child_script)
+            child_path = f.name
+
+        cmd = [
+            py_spy, "record",
+            "--native",
+            "--output", outfile,
+            "--rate", "197",
+            "--", sys.executable, child_path,
+        ]
+        print(f"Command: {' '.join(cmd[:6])} ...")
+        subprocess.run(cmd, text=True)
+        Path(child_path).unlink(missing_ok=True)
+        outpath = Path(outfile)
+        if outpath.exists() and outpath.stat().st_size > 0:
+            print(f"Wrote flamegraph to {outfile}")
+            print(f"Open in browser: file://{outpath.resolve()}")
+        else:
+            print("ERROR: flamegraph was not generated.")
+            sys.exit(1)
         return
 
     stats = Stats()
