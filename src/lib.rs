@@ -1,7 +1,7 @@
-pub mod ring;
+pub mod band;
 pub mod diagonal;
 pub mod echelon;
-pub mod band;
+pub mod ring;
 pub mod snf;
 
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
@@ -24,7 +24,11 @@ fn rust_smith_normal_form<'py>(
     py: Python<'py>,
     data: PyReadonlyArray2<'py, i64>,
     modulus: i64,
-) -> PyResult<(Bound<'py, PyArray2<i64>>, Bound<'py, PyArray2<i64>>, Bound<'py, PyArray2<i64>>)> {
+) -> PyResult<(
+    Bound<'py, PyArray2<i64>>,
+    Bound<'py, PyArray2<i64>>,
+    Bound<'py, PyArray2<i64>>,
+)> {
     let r = ring::RustRingZModN::new_internal(modulus)?;
     let a = data.as_array().to_owned();
     let n = a.nrows();
@@ -33,11 +37,7 @@ fn rust_smith_normal_form<'py>(
     if n == 0 || m == 0 {
         let u = numpy::ndarray::Array2::<i64>::eye(n);
         let v = numpy::ndarray::Array2::<i64>::eye(m);
-        return Ok((
-            u.into_pyarray(py),
-            v.into_pyarray(py),
-            a.into_pyarray(py),
-        ));
+        return Ok((u.into_pyarray(py), v.into_pyarray(py), a.into_pyarray(py)));
     }
 
     // Pad to square if needed

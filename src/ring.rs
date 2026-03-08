@@ -43,6 +43,28 @@ fn posmod(a: i64, n: i64) -> i64 {
     ((a % n) + n) % n
 }
 
+/// Positive modulo for widened intermediates.
+#[inline]
+pub(crate) fn posmod_i128(a: i128, n: i64) -> i64 {
+    let n128 = n as i128;
+    (((a % n128) + n128) % n128) as i64
+}
+
+#[inline]
+pub(crate) fn add_mod(a: i64, b: i64, n: i64) -> i64 {
+    posmod_i128(a as i128 + b as i128, n)
+}
+
+#[inline]
+pub(crate) fn sub_mod(a: i64, b: i64, n: i64) -> i64 {
+    posmod_i128(a as i128 - b as i128, n)
+}
+
+#[inline]
+pub(crate) fn mul_mod(a: i64, b: i64, n: i64) -> i64 {
+    posmod_i128((a as i128) * (b as i128), n)
+}
+
 #[pyclass]
 pub struct RustRingZModN {
     n: i64,
@@ -64,15 +86,15 @@ impl RustRingZModN {
     }
 
     fn add(&self, a: i64, b: i64) -> i64 {
-        posmod(a + b, self.n)
+        add_mod(a, b, self.n)
     }
 
     fn sub(&self, a: i64, b: i64) -> i64 {
-        posmod(a - b, self.n)
+        sub_mod(a, b, self.n)
     }
 
     fn mul(&self, a: i64, b: i64) -> i64 {
-        posmod(a * b, self.n)
+        mul_mod(a, b, self.n)
     }
 
     fn is_zero(&self, a: i64) -> bool {
@@ -114,10 +136,11 @@ impl RustRingZModN {
         let (g, x, _) = egcd(b_val, self.n);
         if g == 0 || a_val % g != 0 {
             return Err(PyValueError::new_err(format!(
-                "{a} not divisible by {b} in Z/{}", self.n
+                "{a} not divisible by {b} in Z/{}",
+                self.n
             )));
         }
-        Ok(posmod(x * (a_val / g), self.n / g))
+        Ok(posmod_i128((x as i128) * ((a_val / g) as i128), self.n / g))
     }
 
     fn unit(&self, a: i64) -> i64 {
@@ -133,13 +156,7 @@ impl RustRingZModN {
         // Fast path: b is a multiple of a in Z/N
         if a_val != 0 && (b_val % gcd(a_val, self.n) == 0) {
             if let Ok(q) = self.div(b_val, a_val) {
-                return Ok((
-                    a_val,
-                    1,
-                    0,
-                    posmod(-q, self.n),
-                    1,
-                ));
+                return Ok((a_val, 1, 0, posmod(-q, self.n), 1));
             }
         }
 
@@ -187,14 +204,15 @@ impl RustRingZModN {
         let c = posmod(c, self.n);
         let target = self.gcd(a, self.gcd(b, c));
         for x in 0..self.n {
-            let candidate = posmod(a + x * b, self.n);
+            let candidate = posmod_i128((a as i128) + (x as i128) * (b as i128), self.n);
             let current = self.gcd(candidate, c);
             if current == target {
                 return Ok(x);
             }
         }
         Err(PyValueError::new_err(format!(
-            "Stab failed for a={a}, b={b}, c={c} in Z/{}", self.n
+            "Stab failed for a={a}, b={b}, c={c} in Z/{}",
+            self.n
         )))
     }
 }
@@ -221,11 +239,9 @@ impl RustRingZModN {
         let b_val = posmod(b, self.n);
         let (g, x, _) = egcd(b_val, self.n);
         if g == 0 || a_val % g != 0 {
-            return Err(format!(
-                "{a} not divisible by {b} in Z/{}", self.n
-            ));
+            return Err(format!("{a} not divisible by {b} in Z/{}", self.n));
         }
-        Ok(posmod(x * (a_val / g), self.n / g))
+        Ok(posmod_i128((x as i128) * ((a_val / g) as i128), self.n / g))
     }
 
     #[inline]

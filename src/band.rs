@@ -1,6 +1,6 @@
 //! Band reduction — Rust port of modularsnf/band.py.
 
-use numpy::ndarray::{Array2, s};
+use numpy::ndarray::{s, Array2};
 
 use crate::diagonal::matmul_mod;
 use crate::echelon::lemma_3_1;
@@ -56,7 +56,11 @@ fn triang(b_mat: &Array2<i64>, b: usize, ring: &RustRingZModN) -> (Array2<i64>, 
 
 /// Shift step: Storjohann's Lemma 7.4.
 /// Returns (C_prime, U_block, V_block).
-fn shift(c_mat: &Array2<i64>, b: usize, ring: &RustRingZModN) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
+fn shift(
+    c_mat: &Array2<i64>,
+    b: usize,
+    ring: &RustRingZModN,
+) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
     let n_mod = ring.n();
     let s2 = b - 1;
 
@@ -95,7 +99,11 @@ pub fn compute_upper_bandwidth(m: &Array2<i64>, n_mod: i64) -> usize {
                 let offset = j - i;
                 match max_offset {
                     None => max_offset = Some(offset),
-                    Some(cur) => if offset > cur { max_offset = Some(offset); }
+                    Some(cur) => {
+                        if offset > cur {
+                            max_offset = Some(offset);
+                        }
+                    }
                 }
             }
         }
@@ -109,7 +117,10 @@ pub fn compute_upper_bandwidth(m: &Array2<i64>, n_mod: i64) -> usize {
 /// Full band reduction: reduce upper bandwidth from b to floor(b/2)+1.
 /// Returns (A_reduced, U_band, V_band, b_new).
 pub fn band_reduction(
-    a: &Array2<i64>, b: usize, t_param: usize, ring: &RustRingZModN,
+    a: &Array2<i64>,
+    b: usize,
+    t_param: usize,
+    ring: &RustRingZModN,
 ) -> (Array2<i64>, Array2<i64>, Array2<i64>, usize) {
     let n_mod = ring.n();
     let n = a.nrows();
@@ -168,7 +179,9 @@ pub fn band_reduction(
                 break;
             }
 
-            let c_block = b_mat.slice(s![offset..offset + n2, offset..offset + n2]).to_owned();
+            let c_block = b_mat
+                .slice(s![offset..offset + n2, offset..offset + n2])
+                .to_owned();
             let (_, u_block, v_block) = shift(&c_block, b, ring);
 
             left_apply_block(&mut b_mat, &u_block, offset, n_mod);
