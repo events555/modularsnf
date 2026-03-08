@@ -19,6 +19,9 @@ build/
 .ruff_cache/
 .claude/
 
+# Profiling
+*.prof
+
 # Environments
 .venv/
 .env
