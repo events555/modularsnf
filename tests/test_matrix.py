@@ -1,24 +1,18 @@
 import numpy as np
+import pytest
 
 from modularsnf.matrix import RingMatrix, _is_within_modulus
 from modularsnf.ring import RingZModN
 
 
-def test_normalize_matrix_handles_large_integers():
-    """
-    Constructing a ``RingMatrix`` from values larger than C long should not
-    raise ``OverflowError``; the data should be reduced modulo N correctly.
-    """
+def test_normalize_matrix_rejects_out_of_range_integers():
+    """Matrix entries must fit in the signed 64-bit contract."""
 
     ring = RingZModN(70)
-    huge = 10 ** 100  # forces fallback to object dtype during normalization
+    huge = 10**100
 
-    matrix = RingMatrix.from_rows(ring, [[huge, 1], [2, 3]])
-
-    assert matrix.shape == (2, 2)
-    expected = np.array([[huge % 70, 1], [2, 3]], dtype=int)
-    assert matrix.data.dtype == expected.dtype
-    assert np.array_equal(matrix.data, expected)
+    with pytest.raises(OverflowError, match="signed 64-bit"):
+        RingMatrix.from_rows(ring, [[huge, 1], [2, 3]])
 
 
 def test_is_within_modulus_checks_value_range():
