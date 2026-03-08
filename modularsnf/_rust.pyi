@@ -13,3 +13,17 @@ class RustRingZModN:
     def unit(self, a: int) -> int: ...
     def gcdex(self, a: int, b: int) -> tuple[int, int, int, int, int]: ...
     def stab(self, a: int, b: int, c: int) -> int: ...
+
+import numpy as np
+from numpy.typing import NDArray
+
+def rust_smith_from_diagonal(
+    diag_data: NDArray[np.int64],
+    modulus: int,
+) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]: ...
+
+def rust_merge_smith_blocks(
+    a_data: NDArray[np.int64],
+    b_data: NDArray[np.int64],
+    modulus: int,
+) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]: ...

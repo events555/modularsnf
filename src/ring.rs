@@ -201,6 +201,15 @@ impl RustRingZModN {
 
 // Internal-only helpers for use from other Rust modules.
 impl RustRingZModN {
+    pub fn new_internal(n: i64) -> PyResult<Self> {
+        if n < 2 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Modulus N must be >= 2",
+            ));
+        }
+        Ok(Self { n })
+    }
+
     #[inline]
     pub fn n(&self) -> i64 {
         self.n

@@ -7,6 +7,15 @@ import numpy as np
 from modularsnf.matrix import RingMatrix
 from modularsnf.ring import RingZModN
 
+try:
+    from modularsnf._rust import (
+        rust_smith_from_diagonal as _rust_diag,
+        rust_merge_smith_blocks as _rust_merge,
+    )
+except ImportError:
+    _rust_diag = None  # type: ignore[assignment]
+    _rust_merge = None  # type: ignore[assignment]
+
 
 
 def smith_from_diagonal(
@@ -37,17 +46,26 @@ def smith_from_diagonal(
         I0 = RingMatrix.identity(ring, 0)
         return I0, I0, D.copy()
 
-    # Step 1: Pad once to a power of two.
     ring = D.ring
+
+    if _rust_diag is not None:
+        u_arr, v_arr, s_arr = _rust_diag(
+            D.data.astype(np.int64), ring.N,
+        )
+        return (
+            RingMatrix._from_ndarray(ring, u_arr[:n, :n].copy()),
+            RingMatrix._from_ndarray(ring, v_arr[:n, :n].copy()),
+            RingMatrix._from_ndarray(ring, s_arr[:n, :n].copy()),
+        )
+
+    # Python fallback: pad to power of two and run raw merge.
     p = max(n, 1)
     size = 1 << (p - 1).bit_length()
     pad_arr = np.zeros((size, size), dtype=int)
     pad_arr[:n, :n] = D.data
 
-    # Step 2: Run the iterative raw-array merge.
     U_arr, V_arr, S_arr = _smith_from_diagonal_raw(pad_arr, ring)
 
-    # Step 3: Crop back to original size and wrap.
     U = RingMatrix._from_ndarray(ring, U_arr[:n, :n].copy())
     V = RingMatrix._from_ndarray(ring, V_arr[:n, :n].copy())
     S = RingMatrix._from_ndarray(ring, S_arr[:n, :n].copy())
@@ -86,6 +104,18 @@ def merge_smith_blocks(
         raise ValueError(
             "merge_smith_blocks expects A,B to be same square size, "
             f"got {A.shape}, {B.shape}"
+        )
+
+    if _rust_merge is not None:
+        u_arr, v_arr, s_arr = _rust_merge(
+            A.data.astype(np.int64),
+            B.data.astype(np.int64),
+            ring.N,
+        )
+        return (
+            RingMatrix._from_ndarray(ring, u_arr),
+            RingMatrix._from_ndarray(ring, v_arr),
+            RingMatrix._from_ndarray(ring, s_arr),
         )
 
     u_arr, v_arr, s_arr = _merge_raw(A.data, B.data, ring)
