@@ -5,10 +5,11 @@ lint:
     uv run ruff check .
 
 typecheck:
-    uv run ty check modularsnf/
+    uv run ty check modularsnf/ scripts/profile_snf.py tests/conftest.py
 
 test:
-    uv run pytest tests/ -x
+    uv run pytest tests/ -x --backend python
+    uv run pytest tests/ -x --backend rust
 
 # Build the Rust extension (debug)
 build:
