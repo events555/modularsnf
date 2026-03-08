@@ -27,3 +27,8 @@ def rust_merge_smith_blocks(
     b_data: NDArray[np.int64],
     modulus: int,
 ) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]: ...
+
+def rust_smith_normal_form(
+    data: NDArray[np.int64],
+    modulus: int,
+) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]: ...

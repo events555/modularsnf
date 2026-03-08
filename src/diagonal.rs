@@ -53,7 +53,7 @@ fn merge_scalars(a: i64, b: i64, ring: &RustRingZModN) -> (Array2<i64>, Array2<i
 ///
 /// Uses row-major iteration with slices to avoid per-element bounds checks.
 /// Cannot use BLAS (.dot()) because we need integer arithmetic with mod.
-fn matmul_mod(a: &Array2<i64>, b: &Array2<i64>, n: i64) -> Array2<i64> {
+pub fn matmul_mod(a: &Array2<i64>, b: &Array2<i64>, n: i64) -> Array2<i64> {
     let rows = a.nrows();
     let cols = b.ncols();
     let inner = a.ncols();
@@ -308,6 +308,28 @@ fn smith_from_diagonal_raw(diag: &Array2<i64>, ring: &RustRingZModN) -> (Array2<
     }
 
     blocks.into_iter().next().unwrap()
+}
+
+/// Public entry for diagonal SNF from other Rust modules.
+/// Pads to power-of-two, runs merge, crops back.
+pub fn smith_from_diagonal_internal(
+    diag: &Array2<i64>, ring: &RustRingZModN,
+) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
+    let n = diag.nrows();
+    if n <= 1 {
+        return (Array2::eye(n), Array2::eye(n), diag.clone());
+    }
+    let size = (n as u64).next_power_of_two() as usize;
+    let mut pad = Array2::zeros((size, size));
+    pad.slice_mut(s![..n, ..n]).assign(diag);
+
+    let (u, v, s) = smith_from_diagonal_raw(&pad, ring);
+
+    (
+        subblock(&u, 0, n, 0, n),
+        subblock(&v, 0, n, 0, n),
+        subblock(&s, 0, n, 0, n),
+    )
 }
 
 // ---- PyO3 exports ----

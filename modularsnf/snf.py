@@ -11,6 +11,11 @@ from .echelon import index1_reduce_on_columns, lemma_3_1
 from .matrix import RingMatrix
 from .ring import RingZModN
 
+try:
+    from modularsnf._rust import rust_smith_normal_form as _rust_snf
+except ImportError:
+    _rust_snf = None  # type: ignore[assignment]
+
 
 class SNFResult(NamedTuple):
     """Result of a Smith Normal Form decomposition over Z/NZ.
@@ -107,6 +112,16 @@ def smith_normal_form(
         U = RingMatrix.identity(ring, n)
         V = RingMatrix.identity(ring, m)
         return U, V, A.copy()
+
+    if _rust_snf is not None:
+        u_arr, v_arr, s_arr = _rust_snf(
+            A.data.astype(np.int64), ring.N,
+        )
+        return (
+            RingMatrix._from_ndarray(ring, u_arr),
+            RingMatrix._from_ndarray(ring, v_arr),
+            RingMatrix._from_ndarray(ring, s_arr),
+        )
 
     # If the matrix is already square, proceed without padding.
     if n == m:
