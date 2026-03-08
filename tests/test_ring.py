@@ -1,12 +1,14 @@
 import math
+
 import pytest
+
 from modularsnf.ring import RingZModN
 
 RINGS_TO_TEST = [2, 5, 9, 12]
 
+
 @pytest.mark.parametrize("N", RINGS_TO_TEST)
 class TestRing:
-    
     @pytest.fixture
     def ring(self, N):
         return RingZModN(N)
@@ -34,13 +36,13 @@ class TestRing:
         for a in range(N):
             for b in range(N):
                 g, s, t, u, v = ring.gcdex(a, b)
-                
+
                 # Check 1: Matrix action
                 row1 = ring.add(ring.mul(s, a), ring.mul(t, b))
                 row2 = ring.add(ring.mul(u, a), ring.mul(v, b))
                 assert row1 == g
                 assert row2 == 0
-                
+
                 # Check 2: Unimodular
                 det = ring.sub(ring.mul(s, v), ring.mul(t, u))
                 assert ring.gcd(det, N) == 1
@@ -76,9 +78,9 @@ class TestRing:
             for b in range(N):
                 for c in range(N):
                     x = ring.stab(a, b, c)
-                    lhs = ring.gcd(a + x*b, c)
+                    lhs = ring.gcd(a + x * b, c)
                     rhs = ring.gcd(a, ring.gcd(b, c))
-                    
+
                     # Note: gcd(a,b,c) in ring is gcd(a, gcd(b, gcd(c, N)))
                     # But since ring.gcd includes N implicitly, we compare outputs
                     assert lhs == rhs
@@ -89,7 +91,12 @@ class TestRing:
             for b in range(N):
                 r = ring.rem(a, b)
                 q = ring.quo(a, b)
-                
+
                 # Check consistency: a = q*b + r
                 rhs = ring.add(ring.mul(q, b), r)
                 assert a == rhs
+
+
+def test_modulus_must_fit_int64() -> None:
+    with pytest.raises(OverflowError, match="signed 64-bit"):
+        RingZModN(10**30)

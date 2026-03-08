@@ -9,7 +9,51 @@ from typing import List, Tuple
 
 import numpy as np
 
-from modularsnf.ring import RingZModN
+from modularsnf.ring import INT64_MAX, INT64_MIN, RingZModN, _coerce_int64
+
+
+def _coerce_object_array_to_int64(data: np.ndarray) -> np.ndarray:
+    """Convert an object array to ``np.int64`` with explicit range checks."""
+    flat = np.empty(data.size, dtype=np.int64)
+    for idx, value in enumerate(data.flat):
+        flat[idx] = _coerce_int64("matrix entry", value)
+    return flat.reshape(data.shape)
+
+
+def _normalize_ndarray(data: np.ndarray) -> np.ndarray:
+    """Normalize ndarray inputs to a 2-D ``np.int64`` array."""
+    arr = np.array(data, copy=True)
+    if arr.size == 0:
+        return np.zeros((0, 0), dtype=np.int64)
+    if arr.ndim == 1:
+        arr = arr.reshape(1, arr.size)
+    if arr.ndim != 2:
+        raise ValueError("Matrix data must be 2-dimensional")
+
+    if arr.dtype == object:
+        return _coerce_object_array_to_int64(arr)
+
+    if np.issubdtype(arr.dtype, np.unsignedinteger):
+        max_val = int(arr.max())
+        if max_val > INT64_MAX:
+            raise OverflowError(
+                "matrix entries must fit in a signed 64-bit integer"
+            )
+        return arr.astype(np.int64, copy=False)
+
+    if np.issubdtype(arr.dtype, np.signedinteger):
+        min_val = int(arr.min())
+        max_val = int(arr.max())
+        if min_val < INT64_MIN or max_val > INT64_MAX:
+            raise OverflowError(
+                "matrix entries must fit in a signed 64-bit integer"
+            )
+        return arr.astype(np.int64, copy=False)
+
+    raise TypeError(
+        "Matrix data must contain integers representable as signed 64-bit "
+        "values"
+    )
 
 
 def _normalize_matrix_data(
@@ -22,47 +66,32 @@ def _normalize_matrix_data(
     become an explicit (0, 0) array so downstream shape logic remains simple.
     """
     if isinstance(data, np.ndarray):
-        try:
-            arr = np.array(data, dtype=int, copy=True)
-        except OverflowError:
-            # Fallback for extremely large Python ints (e.g., SymPy Integers)
-            # that cannot be stored in a fixed-width dtype.
-            arr = np.array(data, dtype=object, copy=True)
-        if arr.size == 0:
-            return arr.reshape((0, 0))
-        if arr.ndim == 1:
-            return arr.reshape(1, arr.size)
-        if arr.ndim != 2:
-            raise ValueError("Matrix data must be 2-dimensional")
-        return arr
+        return _normalize_ndarray(data)
 
     rows = [list(row) for row in data]
     if not rows:
-        return np.zeros((0, 0), dtype=int)
+        return np.zeros((0, 0), dtype=np.int64)
 
     ncols = len(rows[0])
     for row in rows:
         if len(row) != ncols:
             raise ValueError("All rows must have the same length")
 
-    try:
-        return np.array(rows, dtype=int)
-    except OverflowError:
-        # Same fallback as above for list inputs that include unbounded ints.
-        return np.array(rows, dtype=object)
+    arr = np.empty((len(rows), ncols), dtype=np.int64)
+    for i, row in enumerate(rows):
+        for j, value in enumerate(row):
+            arr[i, j] = _coerce_int64("matrix entry", value)
+    return arr
 
 
 def _is_within_modulus(data: np.ndarray, N: int) -> bool:
     """Return True when ``data`` is provably in ``[0, N)``.
 
     Avoids expensive copies by only skipping the modulus reduction when values
-    are demonstrably safe. Object-typed arrays or non-numeric dtypes always
-    force reduction to avoid unsafe assumptions.
+    are demonstrably safe.
     """
     if data.size == 0:
         return True
-    if data.dtype == object:
-        return False
     if not np.issubdtype(data.dtype, np.integer):
         return False
     try:
@@ -97,18 +126,6 @@ class RingMatrix:
         # already reduced, or data we can verify is inside [0, N).
         if not (self._assume_reduced or _is_within_modulus(self.data, N)):
             self.data %= N
-        # If we had to fall back to object dtype for normalization (e.g., from
-        # extremely large Python ints), normalize back to a numeric dtype after
-        # reduction. This keeps downstream NumPy ops (matmul, slicing, etc.) on
-        # the cheaper fixed-width path when possible while still tolerating
-        # arbitrarily large intermediate values. If the reduced values still
-        # cannot fit, we continue with object dtype.
-        if self.data.dtype == object:
-            try:
-                self.data = self.data.astype(int)
-            except (OverflowError, ValueError, TypeError):
-                # Remain object-typed; operations will still work, just a bit slower.
-                pass
 
     @property
     def nrows(self) -> int:
@@ -128,12 +145,12 @@ class RingMatrix:
 
     @classmethod
     def identity(cls, ring: RingZModN, n: int) -> "RingMatrix":
-        return cls(ring, np.eye(n, dtype=int))
+        return cls(ring, np.eye(n, dtype=np.int64))
 
     @classmethod
     def diagonal(cls, ring: RingZModN, diag: List[int]) -> "RingMatrix":
         n = len(diag)
-        rows = np.zeros((n, n), dtype=int)
+        rows = np.zeros((n, n), dtype=np.int64)
         for i, v in enumerate(diag):
             rows[i, i] = v
         return cls(ring, rows)
@@ -172,7 +189,7 @@ class RingMatrix:
         total_rows = a_rows + b_rows
         total_cols = a_cols + b_cols
 
-        data = np.zeros((total_rows, total_cols), dtype=int)
+        data = np.zeros((total_rows, total_cols), dtype=np.int64)
 
         # top-left: A
         data[:a_rows, :a_cols] = A.data
@@ -213,7 +230,7 @@ class RingMatrix:
         if rows == target_rows and cols == target_cols:
             return self.copy()
         N = self.ring.N
-        new = np.zeros((target_rows, target_cols), dtype=int)
+        new = np.zeros((target_rows, target_cols), dtype=np.int64)
         new[:rows, :cols] = self.data[:rows, :cols] % N
         return RingMatrix._from_ndarray(self.ring, new)
 

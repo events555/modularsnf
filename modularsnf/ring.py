@@ -4,16 +4,31 @@ Provides the ``RingZModN`` abstraction with arithmetic, ideal, and gcd tools
 needed by the Smith normal form algorithms implemented in this package.
 
 When the Rust extension is available, hot-path methods delegate to the native
-implementation for speed.  The pure-Python fallback is always kept for
-portability.
+implementation for speed. The pure-Python implementation remains available as
+the reference path and as a fallback when the extension cannot be imported.
 """
 
 import math
+from numbers import Integral
 
 try:
     from modularsnf._rust import RustRingZModN as _RustRing
 except ImportError:
     _RustRing = None  # type: ignore[assignment]
+
+INT64_MIN = -(1 << 63)
+INT64_MAX = (1 << 63) - 1
+
+
+def _coerce_int64(name: str, value: object) -> int:
+    """Return *value* as a signed 64-bit integer or raise."""
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError(f"{name} must be an integer")
+
+    int_value = int(value)
+    if int_value < INT64_MIN or int_value > INT64_MAX:
+        raise OverflowError(f"{name} must fit in a signed 64-bit integer")
+    return int_value
 
 
 class RingZModN:
@@ -25,10 +40,11 @@ class RingZModN:
     N: int
 
     def __init__(self, N: int) -> None:
-        if N < 2:
+        int_modulus = _coerce_int64("modulus", N)
+        if int_modulus < 2:
             raise ValueError("Modulus N must be >= 2")
-        self.N = N
-        self._rust = _RustRing(N) if _RustRing is not None else None
+        self.N = int_modulus
+        self._rust = _RustRing(int_modulus) if _RustRing is not None else None
 
     def add(self, a: int, b: int) -> int:
         return (a + b) % self.N

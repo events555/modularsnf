@@ -1,5 +1,6 @@
 """Utilities for computing Smith normal forms over modular rings."""
 
+from numbers import Integral
 from typing import NamedTuple, Tuple
 
 import numpy as np
@@ -46,17 +47,20 @@ def smith_normal_form_mod(
     ``list[list[int]]``.
 
     Args:
-        matrix: 2-D list of integers.  May be rectangular.
-        modulus: Integer *N* >= 2 defining the ring Z/NZ.
+        matrix: 2-D list of signed 64-bit integers. May be rectangular.
+        modulus: Signed 64-bit integer *N* >= 2 defining the ring Z/NZ.
 
     Raises:
+        OverflowError: If *modulus* or any matrix entry is outside int64.
         ValueError: If *modulus* < 2 or rows have unequal lengths.
         TypeError: If *matrix* is not a list of lists.
 
     Examples:
         >>> S, U, V = smith_normal_form_mod([[2, 4], [6, 8]], modulus=12)
     """
-    if not isinstance(modulus, int) or modulus < 2:
+    if isinstance(modulus, bool) or not isinstance(modulus, Integral):
+        raise ValueError(f"Modulus must be an integer >= 2, got {modulus!r}")
+    if int(modulus) < 2:
         raise ValueError(f"Modulus must be an integer >= 2, got {modulus!r}")
 
     if not isinstance(matrix, (list, tuple)):
