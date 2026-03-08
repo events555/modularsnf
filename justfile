@@ -9,3 +9,11 @@ typecheck:
 
 test:
     uv run pytest tests/ -x
+
+# Build the Rust extension (debug)
+build:
+    uv run maturin develop
+
+# Build the Rust extension (release, optimized)
+build-release:
+    uv run maturin develop --release

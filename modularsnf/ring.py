@@ -2,9 +2,18 @@
 
 Provides the ``RingZModN`` abstraction with arithmetic, ideal, and gcd tools
 needed by the Smith normal form algorithms implemented in this package.
+
+When the Rust extension is available, hot-path methods delegate to the native
+implementation for speed.  The pure-Python fallback is always kept for
+portability.
 """
 
 import math
+
+try:
+    from modularsnf._rust import RustRingZModN as _RustRing
+except ImportError:
+    _RustRing = None  # type: ignore[assignment]
 
 
 class RingZModN:
@@ -19,6 +28,7 @@ class RingZModN:
         if N < 2:
             raise ValueError("Modulus N must be >= 2")
         self.N = N
+        self._rust = _RustRing(N) if _RustRing is not None else None
 
     def add(self, a: int, b: int) -> int:
         return (a + b) % self.N
@@ -34,6 +44,8 @@ class RingZModN:
 
     def gcd(self, a: int, b: int) -> int:
         """Principal generator of the ideal (a, b) in Z/NZ."""
+        if self._rust is not None:
+            return self._rust.gcd(a, b)
         return math.gcd(a % self.N, math.gcd(b % self.N, self.N))
 
     def rem(self, a: int, b: int) -> int:
@@ -71,6 +83,8 @@ class RingZModN:
         [u v] [b]   [0]
         and sv - tu = unit.
         """
+        if self._rust is not None:
+            return self._rust.gcdex(a, b)
         a_val = a % self.N
         b_val = b % self.N
 
@@ -108,6 +122,8 @@ class RingZModN:
 
     def div(self, a: int, b: int) -> int:
         """Exact division a/b. Raises error if b does not divide a."""
+        if self._rust is not None:
+            return self._rust.div(a, b)
         a_val, b_val = a % self.N, b % self.N
         g, x, _ = self._egcd(b_val, self.N)
         if a_val % g != 0:
@@ -115,6 +131,8 @@ class RingZModN:
         return (x * (a_val // g)) % (self.N // g)
 
     def stab(self, a: int, b: int, c: int) -> int:
+        if self._rust is not None:
+            return self._rust.stab(a, b, c)
         a, b, c = a % self.N, b % self.N, c % self.N
         target = self.gcd(a, self.gcd(b, c))
         for x in range(self.N):
