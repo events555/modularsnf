@@ -454,16 +454,9 @@ def _step5_to_8_gcd_chain(
         U.apply_row_2x2(i, i + 1, 1, c, 0, 1)
 
         # Operation 2: Add ``q * Col[i]`` to ``Col[i+1]`` via right transform.
-        for r in range(n):
-            val_i = T.data[r, i]
-            val_ip1 = T.data[r, i + 1]
-            T.data[r, i + 1] = ring.add(val_ip1, ring.mul(q, val_i))
-
-        # Update V with the same column operation.
-        for r in range(n):
-            val_i = V.data[r, i]
-            val_ip1 = V.data[r, i + 1]
-            V.data[r, i + 1] = ring.add(val_ip1, ring.mul(q, val_i))
+        N = ring.N
+        T.data[:, i + 1] = (T.data[:, i + 1] + q * T.data[:, i]) % N
+        V.data[:, i + 1] = (V.data[:, i + 1] + q * V.data[:, i]) % N
 
     # Step 8 (Storjohann 7.3): Run the gcd reduction loop (ripple down).
 
@@ -476,17 +469,16 @@ def _step5_to_8_gcd_chain(
 
         g, s, t, u, v = ring.gcdex(pivot, target)
 
-        for r in range(n):
-            ci = T.data[r, i]
-            ck = T.data[r, col_target]
+        N = ring.N
+        ci = T.data[:, i].copy()
+        ck = T.data[:, col_target].copy()
+        T.data[:, i] = (s * ci + t * ck) % N
+        T.data[:, col_target] = (u * ci + v * ck) % N
 
-            T.data[r, i] = ring.add(ring.mul(s, ci), ring.mul(t, ck))
-            T.data[r, col_target] = ring.add(ring.mul(u, ci), ring.mul(v, ck))
-
-            vi = V.data[r, i]
-            vk = V.data[r, col_target]
-            V.data[r, i] = ring.add(ring.mul(s, vi), ring.mul(t, vk))
-            V.data[r, col_target] = ring.add(ring.mul(u, vi), ring.mul(v, vk))
+        vi = V.data[:, i].copy()
+        vk = V.data[:, col_target].copy()
+        V.data[:, i] = (s * vi + t * vk) % N
+        V.data[:, col_target] = (u * vi + v * vk) % N
 
     # Return idx_k + 1 (1-based) to match paper's "k" for Step 9
     return U, V, T, (idx_k + 1)
