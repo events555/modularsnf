@@ -3,16 +3,16 @@
 //! Implements _merge_scalars_raw, _merge_raw, and _smith_from_diagonal_raw
 //! entirely in Rust, returning results as numpy arrays to Python.
 
-use numpy::ndarray::{Array2, s};
+use numpy::ndarray::{s, Array2};
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
 use pyo3::prelude::*;
 
-use crate::ring::RustRingZModN;
+use crate::ring::{mul_mod, posmod_i128, RustRingZModN};
 
 /// Positive modulo.
 #[inline]
 fn posmod(a: i64, n: i64) -> i64 {
-    ((a % n) + n) % n
+    posmod_i128(a as i128, n)
 }
 
 /// Merge two scalar SNF entries. Returns (U, V, S) as 2x2 arrays.
@@ -21,26 +21,20 @@ fn merge_scalars(a: i64, b: i64, ring: &RustRingZModN) -> (Array2<i64>, Array2<i
     let (g, s, t, u, v) = ring.gcdex_internal(a, b);
 
     if g % n == 0 {
-        return (
-            Array2::eye(2),
-            Array2::eye(2),
-            Array2::zeros((2, 2)),
-        );
+        return (Array2::eye(2), Array2::eye(2), Array2::zeros((2, 2)));
     }
 
-    let tb = posmod(t * b, n);
+    let tb = mul_mod(t, b, n);
     let q_raw = ring.div_internal(tb, g).unwrap_or(0);
     let q = posmod(-q_raw, n);
 
-    let u_arr = Array2::from_shape_vec((2, 2), vec![
-        posmod(s, n), posmod(t, n),
-        posmod(u, n), posmod(v, n),
-    ]).unwrap();
+    let u_arr = Array2::from_shape_vec(
+        (2, 2),
+        vec![posmod(s, n), posmod(t, n), posmod(u, n), posmod(v, n)],
+    )
+    .unwrap();
 
-    let v_arr = Array2::from_shape_vec((2, 2), vec![
-        1, q,
-        1, posmod(1 + q, n),
-    ]).unwrap();
+    let v_arr = Array2::from_shape_vec((2, 2), vec![1, q, 1, posmod(1 + q, n)]).unwrap();
 
     // S = U @ diag(a, b) @ V
     let ab = Array2::from_shape_vec((2, 2), vec![a, 0, 0, b]).unwrap();
@@ -68,11 +62,8 @@ pub fn matmul_mod(a: &Array2<i64>, b: &Array2<i64>, n: i64) -> Array2<i64> {
             }
             let b_row = b.row(k);
             for j in 0..cols {
-                c_row[j] += a_ik * b_row[j];
+                c_row[j] = posmod_i128((c_row[j] as i128) + (a_ik as i128) * (b_row[j] as i128), n);
             }
-        }
-        for j in 0..cols {
-            c_row[j] = posmod(c_row[j], n);
         }
     }
     c
@@ -114,9 +105,14 @@ fn write_block(dst: &mut Array2<i64>, r0: usize, c0: usize, src: &Array2<i64>) {
 /// Left-apply a 2-block transform: rows [s1..s1+t] and [s2..s2+t] of M.
 fn left_apply_block_pair(
     m: &mut Array2<i64>,
-    u00: &Array2<i64>, u01: &Array2<i64>,
-    u10: &Array2<i64>, u11: &Array2<i64>,
-    s1: usize, s2: usize, t: usize, n: i64,
+    u00: &Array2<i64>,
+    u01: &Array2<i64>,
+    u10: &Array2<i64>,
+    u11: &Array2<i64>,
+    s1: usize,
+    s2: usize,
+    t: usize,
+    n: i64,
 ) {
     let r1 = m.slice(s![s1..s1 + t, ..]).to_owned();
     let r2 = m.slice(s![s2..s2 + t, ..]).to_owned();
@@ -129,9 +125,14 @@ fn left_apply_block_pair(
 /// Right-apply a 2-block transform: cols [s1..s1+t] and [s2..s2+t] of M.
 fn right_apply_block_pair(
     m: &mut Array2<i64>,
-    v00: &Array2<i64>, v01: &Array2<i64>,
-    v10: &Array2<i64>, v11: &Array2<i64>,
-    s1: usize, s2: usize, t: usize, n: i64,
+    v00: &Array2<i64>,
+    v01: &Array2<i64>,
+    v10: &Array2<i64>,
+    v11: &Array2<i64>,
+    s1: usize,
+    s2: usize,
+    t: usize,
+    n: i64,
 ) {
     let c1 = m.slice(s![.., s1..s1 + t]).to_owned();
     let c2 = m.slice(s![.., s2..s2 + t]).to_owned();
@@ -145,13 +146,17 @@ fn right_apply_block_pair(
 fn matmul_mod_add(a: &Array2<i64>, b: &Array2<i64>, n: i64) -> Array2<i64> {
     let mut c = a.clone();
     c.zip_mut_with(b, |x, &y| {
-        *x = posmod(*x + y, n);
+        *x = posmod_i128((*x as i128) + (y as i128), n);
     });
     c
 }
 
 /// Recursive merge of two SNF blocks. Returns (U, V, S) as 2n x 2n arrays.
-fn merge_raw(a_arr: &Array2<i64>, b_arr: &Array2<i64>, ring: &RustRingZModN) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
+fn merge_raw(
+    a_arr: &Array2<i64>,
+    b_arr: &Array2<i64>,
+    ring: &RustRingZModN,
+) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
     let n_mod = ring.n();
     let n = a_arr.nrows();
 
@@ -194,7 +199,10 @@ fn merge_raw(a_arr: &Array2<i64>, b_arr: &Array2<i64>, ring: &RustRingZModN) -> 
                     &subblock(&u_loc, 0, t, t, 2 * t),
                     &subblock(&u_loc, t, 2 * t, 0, t),
                     &subblock(&u_loc, t, 2 * t, t, 2 * t),
-                    s1, s2, t, n_mod,
+                    s1,
+                    s2,
+                    t,
+                    n_mod,
                 );
                 right_apply_block_pair(
                     &mut v_total,
@@ -202,7 +210,10 @@ fn merge_raw(a_arr: &Array2<i64>, b_arr: &Array2<i64>, ring: &RustRingZModN) -> 
                     &subblock(&v_loc, 0, t, t, 2 * t),
                     &subblock(&v_loc, t, 2 * t, 0, t),
                     &subblock(&v_loc, t, 2 * t, t, 2 * t),
-                    s1, s2, t, n_mod,
+                    s1,
+                    s2,
+                    t,
+                    n_mod,
                 );
             }
         }};
@@ -265,7 +276,10 @@ fn merge_raw(a_arr: &Array2<i64>, b_arr: &Array2<i64>, ring: &RustRingZModN) -> 
 }
 
 /// Bottom-up iterative diagonal SNF for power-of-two matrices.
-fn smith_from_diagonal_raw(diag: &Array2<i64>, ring: &RustRingZModN) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
+fn smith_from_diagonal_raw(
+    diag: &Array2<i64>,
+    ring: &RustRingZModN,
+) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
     let n_mod = ring.n();
     let n = diag.nrows();
 
@@ -313,7 +327,8 @@ fn smith_from_diagonal_raw(diag: &Array2<i64>, ring: &RustRingZModN) -> (Array2<
 /// Public entry for diagonal SNF from other Rust modules.
 /// Pads to power-of-two, runs merge, crops back.
 pub fn smith_from_diagonal_internal(
-    diag: &Array2<i64>, ring: &RustRingZModN,
+    diag: &Array2<i64>,
+    ring: &RustRingZModN,
 ) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
     let n = diag.nrows();
     if n <= 1 {
@@ -341,13 +356,21 @@ pub fn rust_smith_from_diagonal<'py>(
     py: Python<'py>,
     diag_data: PyReadonlyArray2<'py, i64>,
     modulus: i64,
-) -> PyResult<(Bound<'py, PyArray2<i64>>, Bound<'py, PyArray2<i64>>, Bound<'py, PyArray2<i64>>)> {
+) -> PyResult<(
+    Bound<'py, PyArray2<i64>>,
+    Bound<'py, PyArray2<i64>>,
+    Bound<'py, PyArray2<i64>>,
+)> {
     let ring = RustRingZModN::new_internal(modulus)?;
     let arr = diag_data.as_array().to_owned();
     let n = arr.nrows();
 
     // Pad to power of two
-    let size = if n <= 1 { n } else { (n as u64).next_power_of_two() as usize };
+    let size = if n <= 1 {
+        n
+    } else {
+        (n as u64).next_power_of_two() as usize
+    };
     let mut pad = Array2::zeros((size, size));
     for i in 0..n {
         for j in 0..n {
@@ -376,16 +399,16 @@ pub fn rust_merge_smith_blocks<'py>(
     a_data: PyReadonlyArray2<'py, i64>,
     b_data: PyReadonlyArray2<'py, i64>,
     modulus: i64,
-) -> PyResult<(Bound<'py, PyArray2<i64>>, Bound<'py, PyArray2<i64>>, Bound<'py, PyArray2<i64>>)> {
+) -> PyResult<(
+    Bound<'py, PyArray2<i64>>,
+    Bound<'py, PyArray2<i64>>,
+    Bound<'py, PyArray2<i64>>,
+)> {
     let ring = RustRingZModN::new_internal(modulus)?;
     let a = a_data.as_array().to_owned();
     let b = b_data.as_array().to_owned();
 
     let (u, v, s) = merge_raw(&a, &b, &ring);
 
-    Ok((
-        u.into_pyarray(py),
-        v.into_pyarray(py),
-        s.into_pyarray(py),
-    ))
+    Ok((u.into_pyarray(py), v.into_pyarray(py), s.into_pyarray(py)))
 }
