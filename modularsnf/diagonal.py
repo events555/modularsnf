@@ -190,25 +190,24 @@ def merge_smith_blocks(
         Block1_prime = S_loc.submatrix(0, t, 0, t)
         Block2_prime = S_loc.submatrix(t, 2 * t, t, 2 * t)
 
-        U_step = RingMatrix.identity(ring, N)
-        V_step = RingMatrix.identity(ring, N)
-
         start1 = index_map[idx1]
         start2 = index_map[idx2]
 
-        U_step.write_block(start1, start1, U_loc.submatrix(0, t, 0, t))
-        U_step.write_block(start1, start2, U_loc.submatrix(0, t, t, 2 * t))
-        U_step.write_block(start2, start1, U_loc.submatrix(t, 2 * t, 0, t))
-        U_step.write_block(start2, start2, U_loc.submatrix(t, 2 * t, t, 2 * t))
-
-        V_step.write_block(start1, start1, V_loc.submatrix(0, t, 0, t))
-        V_step.write_block(start1, start2, V_loc.submatrix(0, t, t, 2 * t))
-        V_step.write_block(start2, start1, V_loc.submatrix(t, 2 * t, 0, t))
-        V_step.write_block(start2, start2, V_loc.submatrix(t, 2 * t, t, 2 * t))
-
-        nonlocal U_total, V_total
-        U_total = U_step @ U_total
-        V_total = V_total @ V_step
+        # Exploit sparsity: U_step is identity with U_loc embedded at
+        # (start1, start2) positions.  Instead of a full N x N matmul,
+        # update only the 2t affected rows/columns.
+        ud = U_loc.data
+        U_total.left_apply_block_pair(
+            ud[0:t, 0:t], ud[0:t, t:2 * t],
+            ud[t:2 * t, 0:t], ud[t:2 * t, t:2 * t],
+            start1, start2,
+        )
+        vd = V_loc.data
+        V_total.right_apply_block_pair(
+            vd[0:t, 0:t], vd[0:t, t:2 * t],
+            vd[t:2 * t, 0:t], vd[t:2 * t, t:2 * t],
+            start1, start2,
+        )
 
         return Block1_prime, Block2_prime
 
