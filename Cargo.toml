@@ -11,3 +11,6 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.24", features = ["extension-module"] }
 numpy = "0.24"
 ndarray = "0.16"
+
+[profile.release]
+debug = true
