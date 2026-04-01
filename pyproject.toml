@@ -4,10 +4,10 @@ build-backend = "maturin"
 
 [project]
 name = "modularsnf"
-version = "0.2.0"
+version = "0.3.0"
 description = "A Python module for Smith Normal Form calculations over Z/N rings"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 classifiers = [

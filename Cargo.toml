@@ -1,7 +1,10 @@
 [package]
 name = "modularsnf"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
+license = "Apache-2.0"
+description = "Smith Normal Form calculations over Z/N rings"
+repository = "https://github.com/events555/modularsnf"
 
 [lib]
 name = "_rust"
