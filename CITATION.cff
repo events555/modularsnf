@@ -1,0 +1,21 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it and the following work."
+title: "modularsnf"
+type: software
+authors:
+  - family-names: Nguyen
+    given-names: Steven
+license: Apache-2.0
+repository-code: "https://github.com/events555/modularsnf"
+
+references:
+  - type: thesis
+    title: "Algorithms for Matrix Canonical Forms"
+    authors:
+      - family-names: Storjohann
+        given-names: Arne
+    institution:
+      name: "Swiss Federal Institute of Technology Zurich (ETH Zurich)"
+    thesis-type: "Doctoral dissertation"
+    number: "Diss. ETH No. 13922"
+    year: 2000
