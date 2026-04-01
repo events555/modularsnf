@@ -19,6 +19,16 @@ build/
 .ruff_cache/
 .claude/
 
+# Profiling
+*.prof
+flamegraph_*.svg
+
+# Rust
+target/
+*.so
+*.dylib
+*.pyd
+
 # Environments
 .venv/
 .env

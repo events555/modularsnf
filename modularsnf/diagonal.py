@@ -7,40 +7,16 @@ import numpy as np
 from modularsnf.matrix import RingMatrix
 from modularsnf.ring import RingZModN
 
-
-def _is_zero_matrix(M: RingMatrix) -> bool:
-    """Determine whether an SNF-form matrix contains only zeros.
-
-    Args:
-        M: Smith form matrix to examine.
-
-    Returns:
-        True if the matrix has no rows or columns or if its (0, 0) entry is
-        zero; False otherwise.
-    """
-
-    if M.nrows == 0 or M.ncols == 0:
-        return True
-    return M.ring.is_zero(M.data[0, 0])
-
-
-def _get_rank(M: RingMatrix) -> int:
-    """Count the diagonal rank of an SNF-form matrix.
-
-    Args:
-        M: Smith form matrix whose rank should be measured.
-
-    Returns:
-        The number of nonzero diagonal entries, limited by the shorter
-        dimension of the matrix.
-    """
-
-    rank = 0
-    diag_len = min(M.nrows, M.ncols)
-    for i in range(diag_len):
-        if not M.ring.is_zero(M.data[i, i]):
-            rank += 1
-    return rank
+try:
+    from modularsnf._rust import (
+        rust_merge_smith_blocks as _rust_merge,
+    )
+    from modularsnf._rust import (
+        rust_smith_from_diagonal as _rust_diag,
+    )
+except ImportError:
+    _rust_diag = None  # type: ignore[assignment]
+    _rust_merge = None  # type: ignore[assignment]
 
 
 def smith_from_diagonal(
@@ -71,58 +47,32 @@ def smith_from_diagonal(
         I0 = RingMatrix.identity(ring, 0)
         return I0, I0, D.copy()
 
-    # Step 1: Pad once to a power of two.
-    D_pad = D.pad_to_square_power2()
+    ring = D.ring
 
-    # Step 2: Run the power-of-two recursion.
-    U_pad, V_pad, S_pad = _smith_from_diagonal_power2(D_pad)
+    if _rust_diag is not None:
+        u_arr, v_arr, s_arr = _rust_diag(
+            D.data.astype(np.int64),
+            ring.N,
+        )
+        return (
+            RingMatrix._from_ndarray(ring, u_arr[:n, :n].copy()),
+            RingMatrix._from_ndarray(ring, v_arr[:n, :n].copy()),
+            RingMatrix._from_ndarray(ring, s_arr[:n, :n].copy()),
+        )
 
-    # Step 3: Crop back to original size. U_pad and V_pad are principal
-    # transforms for D_pad, so the principal n x n submatrices are the
-    # transforms for D.
-    U = U_pad.submatrix(0, n, 0, n)
-    V = V_pad.submatrix(0, n, 0, n)
-    S = S_pad.submatrix(0, n, 0, n)
+    # Python fallback: pad to power of two and run raw merge.
+    p = max(n, 1)
+    size = 1 << (p - 1).bit_length()
+    pad_arr = np.zeros((size, size), dtype=int)
+    pad_arr[:n, :n] = D.data
+
+    U_arr, V_arr, S_arr = _smith_from_diagonal_raw(pad_arr, ring)
+
+    U = RingMatrix._from_ndarray(ring, U_arr[:n, :n].copy())
+    V = RingMatrix._from_ndarray(ring, V_arr[:n, :n].copy())
+    S = RingMatrix._from_ndarray(ring, S_arr[:n, :n].copy())
 
     return U, V, S
-
-
-def _smith_from_diagonal_power2(
-    D: RingMatrix,
-) -> Tuple[RingMatrix, RingMatrix, RingMatrix]:
-    """Diagonalize a power-of-two square matrix into Smith form.
-
-    Args:
-        D: Square matrix with dimension a power of two.
-
-    Returns:
-        A tuple ``(U, V, S)`` where ``S`` is the Smith form of ``D`` and
-        ``U`` and ``V`` are the unimodular transforms such that ``S = U D V``.
-    """
-
-    ring: RingZModN = D.ring
-    n = D.nrows
-
-    if n == 1:
-        I1 = RingMatrix.identity(ring, 1)
-        return I1, I1, D.copy()
-
-    t = n // 2
-    D1 = D.submatrix(0, t, 0, t)
-    D2 = D.submatrix(t, n, t, n)
-
-    U1, V1, A = _smith_from_diagonal_power2(D1)
-    U2, V2, B = _smith_from_diagonal_power2(D2)
-
-    U_block = RingMatrix.block_diag(U1, U2)
-    V_block = RingMatrix.block_diag(V1, V2)
-
-    U_merge, V_merge, S = merge_smith_blocks(A, B)
-
-    U_total = U_merge @ U_block
-    V_total = V_block @ V_merge
-
-    return U_total, V_total, S
 
 
 def merge_smith_blocks(
@@ -157,106 +107,24 @@ def merge_smith_blocks(
             f"got {A.shape}, {B.shape}"
         )
 
-    if n == 0:
-        I0 = RingMatrix.identity(ring, 0)
-        return I0, I0, I0
+    if _rust_merge is not None:
+        u_arr, v_arr, s_arr = _rust_merge(
+            A.data.astype(np.int64),
+            B.data.astype(np.int64),
+            ring.N,
+        )
+        return (
+            RingMatrix._from_ndarray(ring, u_arr),
+            RingMatrix._from_ndarray(ring, v_arr),
+            RingMatrix._from_ndarray(ring, s_arr),
+        )
 
-    if n == 1:
-        a = A.data[0, 0]
-        b = B.data[0, 0]
-        return _merge_scalars(a, b, ring)
-
-    t = n // 2
-    N = 2 * n
-
-    A1 = A.submatrix(0, t, 0, t)
-    A2 = A.submatrix(t, n, t, n)
-    B1 = B.submatrix(0, t, 0, t)
-    B2 = B.submatrix(t, n, t, n)
-
-    U_total = RingMatrix.identity(ring, N)
-    V_total = RingMatrix.identity(ring, N)
-
-    index_map = {0: 0, 1: t, 2: n, 3: n + t}
-
-    def apply_merge_step(Block1, Block2, idx1, idx2):
-        """Apply recursive merge and embed results in global transforms."""
-
-        if _is_zero_matrix(Block1) and _is_zero_matrix(Block2):
-            return Block1, Block2
-
-        U_loc, V_loc, S_loc = merge_smith_blocks(Block1, Block2)
-
-        Block1_prime = S_loc.submatrix(0, t, 0, t)
-        Block2_prime = S_loc.submatrix(t, 2 * t, t, 2 * t)
-
-        U_step = RingMatrix.identity(ring, N)
-        V_step = RingMatrix.identity(ring, N)
-
-        start1 = index_map[idx1]
-        start2 = index_map[idx2]
-
-        U_step.write_block(start1, start1, U_loc.submatrix(0, t, 0, t))
-        U_step.write_block(start1, start2, U_loc.submatrix(0, t, t, 2 * t))
-        U_step.write_block(start2, start1, U_loc.submatrix(t, 2 * t, 0, t))
-        U_step.write_block(start2, start2, U_loc.submatrix(t, 2 * t, t, 2 * t))
-
-        V_step.write_block(start1, start1, V_loc.submatrix(0, t, 0, t))
-        V_step.write_block(start1, start2, V_loc.submatrix(0, t, t, 2 * t))
-        V_step.write_block(start2, start1, V_loc.submatrix(t, 2 * t, 0, t))
-        V_step.write_block(start2, start2, V_loc.submatrix(t, 2 * t, t, 2 * t))
-
-        nonlocal U_total, V_total
-        U_total = U_step @ U_total
-        V_total = V_total @ V_step
-
-        return Block1_prime, Block2_prime
-
-    A1, B1 = apply_merge_step(A1, B1, 0, 2)
-    A2, B2 = apply_merge_step(A2, B2, 1, 3)
-    A2, B1 = apply_merge_step(A2, B1, 1, 2)
-    B1, B2 = apply_merge_step(B1, B2, 2, 3)
-
-    if not _is_zero_matrix(B2):
-        r_B1 = _get_rank(B1)
-
-        if r_B1 < t:
-            r_B2 = _get_rank(B2)
-
-            P_arr = np.zeros((2 * t, 2 * t), dtype=int)
-
-            for i in range(r_B1):
-                P_arr[i, i] = 1
-            for i in range(r_B2):
-                P_arr[r_B1 + i, t + i] = 1
-
-            current_row = r_B1 + r_B2
-            for i in range(t - r_B1):
-                P_arr[current_row, r_B1 + i] = 1
-                current_row += 1
-            for i in range(t - r_B2):
-                P_arr[current_row, t + r_B2 + i] = 1
-                current_row += 1
-
-            P_loc = RingMatrix._from_ndarray(ring, P_arr)
-
-            P_glob = RingMatrix.identity(ring, N)
-            P_glob.write_block(n, n, P_loc)
-            P_glob_T = P_glob.transpose()
-
-            U_total = P_glob @ U_total
-            V_total = V_total @ P_glob_T
-
-            B_combined = RingMatrix.block_diag(B1, B2)
-            S_target = P_loc @ B_combined @ P_loc.transpose()
-            B1 = S_target.submatrix(0, t, 0, t)
-            B2 = S_target.submatrix(t, 2 * t, t, 2 * t)
-
-    A_prime = RingMatrix.block_diag(A1, A2)
-    B_prime = RingMatrix.block_diag(B1, B2)
-    S_final = RingMatrix.block_diag(A_prime, B_prime)
-
-    return U_total, V_total, S_final
+    u_arr, v_arr, s_arr = _merge_raw(A.data, B.data, ring)
+    return (
+        RingMatrix._from_ndarray(ring, u_arr),
+        RingMatrix._from_ndarray(ring, v_arr),
+        RingMatrix._from_ndarray(ring, s_arr),
+    )
 
 
 def _merge_scalars(
@@ -273,21 +141,236 @@ def _merge_scalars(
         A tuple ``(U, V, S)`` where ``S`` is the Smith form of
         ``diag(a, b)`` and ``U`` and ``V`` are the unimodular transforms.
     """
+    u_arr, v_arr, s_arr = _merge_scalars_raw(a, b, ring)
+    return (
+        RingMatrix._from_ndarray(ring, u_arr),
+        RingMatrix._from_ndarray(ring, v_arr),
+        RingMatrix._from_ndarray(ring, s_arr),
+    )
 
+
+# ---------------------------------------------------------------------------
+# Raw numpy implementations — no RingMatrix construction in hot paths
+# ---------------------------------------------------------------------------
+
+_EYE2 = np.eye(2, dtype=int)
+_ZERO2 = np.zeros((2, 2), dtype=int)
+
+
+def _merge_scalars_raw(
+    a: int, b: int, ring: RingZModN
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Merge two scalar SNF blocks on raw arrays.
+
+    Returns (U, V, S) as 2x2 numpy arrays reduced mod ring.N.
+    """
     g, s, t, u, v = ring.gcdex(a, b)
+    N = ring.N
 
-    if ring.is_zero(g):
-        I2 = RingMatrix.identity(ring, 2)
-        Z2 = RingMatrix._from_ndarray(ring, np.zeros((2, 2), dtype=int))
-        return I2, I2, Z2
+    if g % N == 0:
+        return _EYE2.copy(), _EYE2.copy(), _ZERO2.copy()
 
-    tb = ring.mul(t, b)
+    tb = (t * b) % N
     q_raw = ring.div(tb, g)
-    q = (-q_raw) % ring.N
+    q = (-q_raw) % N
 
-    U = RingMatrix.from_rows(ring, [[s, t], [u, v]])
-    V = RingMatrix.from_rows(ring, [[1, q], [1, (1 + q) % ring.N]])
+    u_arr = np.array([[s, t], [u, v]], dtype=int) % N
+    v_arr = np.array([[1, q], [1, (1 + q) % N]], dtype=int)
+    s_arr = (u_arr @ np.array([[a, 0], [0, b]], dtype=int) @ v_arr) % N
+    return u_arr, v_arr, s_arr
 
-    AB = RingMatrix.diagonal(ring, [a, b])
-    S = U @ AB @ V
-    return U, V, S
+
+def _is_zero_raw(arr: np.ndarray, N: int) -> bool:
+    """Check if a diagonal SNF array is zero (first entry is zero mod N)."""
+    if arr.shape[0] == 0:
+        return True
+    return arr[0, 0] % N == 0
+
+
+def _get_rank_raw(arr: np.ndarray, N: int) -> int:
+    """Count nonzero diagonal entries mod N."""
+    n = min(arr.shape[0], arr.shape[1])
+    rank = 0
+    for i in range(n):
+        if arr[i, i] % N != 0:
+            rank += 1
+    return rank
+
+
+def _merge_raw(
+    a_arr: np.ndarray, b_arr: np.ndarray, ring: RingZModN
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Raw-array version of merge_smith_blocks.
+
+    Args:
+        a_arr: n x n SNF array.
+        b_arr: n x n SNF array.
+        ring: Ring for arithmetic.
+
+    Returns:
+        (U, V, S) as raw 2n x 2n numpy arrays.
+    """
+    N = ring.N
+    n = a_arr.shape[0]
+
+    if n == 0:
+        e = np.zeros((0, 0), dtype=int)
+        return e, e, e
+
+    if n == 1:
+        u2, v2, s2 = _merge_scalars_raw(
+            int(a_arr[0, 0]), int(b_arr[0, 0]), ring
+        )
+        return u2, v2, s2
+
+    t = n // 2
+    NN = 2 * n
+
+    A1 = a_arr[0:t, 0:t].copy()
+    A2 = a_arr[t:n, t:n].copy()
+    B1 = b_arr[0:t, 0:t].copy()
+    B2 = b_arr[t:n, t:n].copy()
+
+    U_total = np.eye(NN, dtype=int)
+    V_total = np.eye(NN, dtype=int)
+
+    index_map = (0, t, n, n + t)  # tuple for speed
+
+    def apply_step(block1, block2, idx1, idx2):
+        if _is_zero_raw(block1, N) and _is_zero_raw(block2, N):
+            return block1, block2
+
+        u_loc, v_loc, s_loc = _merge_raw(block1, block2, ring)
+
+        b1_prime = s_loc[0:t, 0:t].copy()
+        b2_prime = s_loc[t : 2 * t, t : 2 * t].copy()
+
+        s1 = index_map[idx1]
+        s2_ = index_map[idx2]
+
+        # Left-apply U_loc block pair to U_total
+        r1 = U_total[s1 : s1 + t, :].copy()
+        r2 = U_total[s2_ : s2_ + t, :].copy()
+        U_total[s1 : s1 + t, :] = (
+            u_loc[0:t, 0:t] @ r1 + u_loc[0:t, t : 2 * t] @ r2
+        ) % N
+        U_total[s2_ : s2_ + t, :] = (
+            u_loc[t : 2 * t, 0:t] @ r1 + u_loc[t : 2 * t, t : 2 * t] @ r2
+        ) % N
+
+        # Right-apply V_loc block pair to V_total
+        c1 = V_total[:, s1 : s1 + t].copy()
+        c2 = V_total[:, s2_ : s2_ + t].copy()
+        V_total[:, s1 : s1 + t] = (
+            c1 @ v_loc[0:t, 0:t] + c2 @ v_loc[t : 2 * t, 0:t]
+        ) % N
+        V_total[:, s2_ : s2_ + t] = (
+            c1 @ v_loc[0:t, t : 2 * t] + c2 @ v_loc[t : 2 * t, t : 2 * t]
+        ) % N
+
+        return b1_prime, b2_prime
+
+    A1, B1 = apply_step(A1, B1, 0, 2)
+    A2, B2 = apply_step(A2, B2, 1, 3)
+    A2, B1 = apply_step(A2, B1, 1, 2)
+    B1, B2 = apply_step(B1, B2, 2, 3)
+
+    if not _is_zero_raw(B2, N):
+        r_B1 = _get_rank_raw(B1, N)
+
+        if r_B1 < t:
+            r_B2 = _get_rank_raw(B2, N)
+
+            P_arr = np.zeros((2 * t, 2 * t), dtype=int)
+            for i in range(r_B1):
+                P_arr[i, i] = 1
+            for i in range(r_B2):
+                P_arr[r_B1 + i, t + i] = 1
+            cr = r_B1 + r_B2
+            for i in range(t - r_B1):
+                P_arr[cr, r_B1 + i] = 1
+                cr += 1
+            for i in range(t - r_B2):
+                P_arr[cr, t + r_B2 + i] = 1
+                cr += 1
+
+            # Build P_glob as identity with P_arr at (n, n)
+            P_glob = np.eye(NN, dtype=int)
+            P_glob[n : n + 2 * t, n : n + 2 * t] = P_arr
+            P_glob_T = P_glob.T.copy()
+
+            U_total = (P_glob @ U_total) % N
+            V_total = (V_total @ P_glob_T) % N
+
+            # Combine B1, B2 into block diag, permute
+            B_comb = np.zeros((2 * t, 2 * t), dtype=int)
+            B_comb[0:t, 0:t] = B1
+            B_comb[t : 2 * t, t : 2 * t] = B2
+            S_target = (P_arr @ B_comb @ P_arr.T) % N
+            B1 = S_target[0:t, 0:t].copy()
+            B2 = S_target[t : 2 * t, t : 2 * t].copy()
+
+    # Assemble S_final as block_diag(A1, A2, B1, B2)
+    S_final = np.zeros((NN, NN), dtype=int)
+    S_final[0:t, 0:t] = A1
+    S_final[t:n, t:n] = A2
+    S_final[n : n + t, n : n + t] = B1
+    S_final[n + t : NN, n + t : NN] = B2
+
+    return U_total, V_total, S_final
+
+
+def _smith_from_diagonal_raw(
+    diag_arr: np.ndarray, ring: RingZModN
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Raw-array power-of-two diagonal SNF via bottom-up iterative merge.
+
+    Args:
+        diag_arr: n x n diagonal array with n a power of two.
+        ring: Ring for arithmetic.
+
+    Returns:
+        (U, V, S) as n x n numpy arrays.
+    """
+    N = ring.N
+    n = diag_arr.shape[0]
+
+    if n <= 1:
+        return np.eye(n, dtype=int), np.eye(n, dtype=int), diag_arr.copy()
+
+    # Bottom-up: start with n 1x1 blocks, merge pairwise
+    # Each element is (U, V, S) as raw arrays
+    blocks = []
+    for i in range(n):
+        s = diag_arr[i : i + 1, i : i + 1].copy()
+        blocks.append(
+            (np.ones((1, 1), dtype=int), np.ones((1, 1), dtype=int), s)
+        )
+
+    size = 1
+    while size < n:
+        new_blocks = []
+        for i in range(0, len(blocks), 2):
+            U1, V1, A = blocks[i]
+            U2, V2, B = blocks[i + 1]
+
+            U_merge, V_merge, S = _merge_raw(A, B, ring)
+
+            # U_block = block_diag(U1, U2), then U_total = U_merge @ U_block
+            bsz = size
+            U_block = np.zeros((2 * bsz, 2 * bsz), dtype=int)
+            U_block[0:bsz, 0:bsz] = U1
+            U_block[bsz : 2 * bsz, bsz : 2 * bsz] = U2
+            U_total = (U_merge @ U_block) % N
+
+            V_block = np.zeros((2 * bsz, 2 * bsz), dtype=int)
+            V_block[0:bsz, 0:bsz] = V1
+            V_block[bsz : 2 * bsz, bsz : 2 * bsz] = V2
+            V_total = (V_block @ V_merge) % N
+
+            new_blocks.append((U_total, V_total, S))
+
+        blocks = new_blocks
+        size *= 2
+
+    return blocks[0]

@@ -132,9 +132,6 @@ def shift(C: RingMatrix, b: int) -> Tuple[RingMatrix, RingMatrix, RingMatrix]:
     return C_prime, U1, V_block
 
 
-# TODO: Implement band_reduction following Storjohann's BandReduction algorithm (see https://uwspace.uwaterloo.ca/items/b2a6ebc4-f0e2-40ab-93f1-7b5c7d4d1b7f).
-
-
 def band_reduction(
     A: RingMatrix,
     b: int,
@@ -199,19 +196,11 @@ def band_reduction(
         # triang returns B_block_prime, W with B_block_prime = B_block * diag(I_{s1}, W)
         B_block_prime, W = triang(B_block, b)
 
-        # Build local right transform V_loc = diag(I_{s1}, W)
-        I_s1 = RingMatrix.identity(ring, s1)
-        V_loc = RingMatrix.block_diag(I_s1, W)  # n1 x n1
-        I_s1 = RingMatrix.identity(ring, s1)
-        V_loc = RingMatrix.block_diag(I_s1, W)  # n1 x n1
-
-        # Embed into N_big x N_big
-        V_step = RingMatrix.identity(ring, N_big)
-        V_step.write_block(top, top, V_loc)
-
-        # Apply globally
-        B = B @ V_step
-        V_big = V_big @ V_step
+        # V_loc = diag(I_{s1}, W), so only W at position (top+s1, top+s1)
+        # differs from identity.  Apply as sparse block update.
+        w_start = top + s1
+        B.right_apply_block(W.data, w_start)
+        V_big.right_apply_block(W.data, w_start)
 
         # --- Inner "shift" blocks
         numer = n - t - (i + 1) * s1
@@ -232,22 +221,15 @@ def band_reduction(
             # C_prime = diag(U_block, I_{s2}) * C_block * diag(I_{s2}, V_block)
             C_prime, U_block, V_block = shift(C_block, b)
 
-            # Local 2s2 x 2s2 transforms
-            I_s2 = RingMatrix.identity(ring, s2)
-            U_loc = RingMatrix.block_diag(U_block, I_s2)
-            V_loc2 = RingMatrix.block_diag(I_s2, V_block)
-
-            # Embed into N_big x N_big
-            U_step = RingMatrix.identity(ring, N_big)
-            V_step2 = RingMatrix.identity(ring, N_big)
-
-            U_step.write_block(offset, offset, U_loc)
-            V_step2.write_block(offset, offset, V_loc2)
-
-            # Apply globally
-            B = U_step @ B @ V_step2
-            U_big = U_step @ U_big
-            V_big = V_big @ V_step2
+            # U_loc = diag(U_block, I_{s2}): non-identity part is U_block
+            # at (offset, offset).
+            # V_loc2 = diag(I_{s2}, V_block): non-identity part is V_block
+            # at (offset+s2, offset+s2).
+            # Apply as sparse block updates instead of full N_big matmuls.
+            B.left_apply_block(U_block.data, offset)
+            B.right_apply_block(V_block.data, offset + s2)
+            U_big.left_apply_block(U_block.data, offset)
+            V_big.right_apply_block(V_block.data, offset + s2)
 
     # Extract the reduced n x n principal block and the corresponding transforms
     A_reduced = B.submatrix(0, n, 0, n)
@@ -264,20 +246,17 @@ def compute_upper_bandwidth(M: RingMatrix) -> int:
         b = max{ j - i | M[i,j] ≠ 0, j ≥ i } + 1,
     or 0 if the matrix is identically zero.
     """
-    ring = M.ring
     nrows, ncols = M.shape
-    max_offset = -1
-    for i in range(nrows):
-        for j in range(ncols):
-            val = M.data[i, j]
-            if not ring.is_zero(val) and j >= i:
-                offset = j - i
-                if offset > max_offset:
-                    max_offset = offset
-
-    if max_offset < 0:
+    N = M.ring.N
+    nonzero = M.data % N != 0
+    rows, cols = np.nonzero(nonzero)
+    if len(rows) == 0:
         return 0
-    return max_offset + 1
+    offsets = cols - rows
+    upper_offsets = offsets[offsets >= 0]
+    if len(upper_offsets) == 0:
+        return 0
+    return int(upper_offsets.max()) + 1
 
 
 def project_to_upper_bandwidth(M: RingMatrix, b: int) -> RingMatrix:
@@ -286,11 +265,8 @@ def project_to_upper_bandwidth(M: RingMatrix, b: int) -> RingMatrix:
         keep entries with 0 ≤ j - i < b,
         zero everything else.
     """
-    ring = M.ring
     nrows, ncols = M.shape
-    arr = np.zeros((nrows, ncols), dtype=int)
-    for i in range(nrows):
-        for j in range(ncols):
-            if 0 <= j - i < b:
-                arr[i, j] = M.data[i, j]
-    return RingMatrix._from_ndarray(ring, arr)
+    rows, cols = np.ogrid[:nrows, :ncols]
+    mask = (cols - rows >= 0) & (cols - rows < b)
+    arr = np.where(mask, M.data, 0)
+    return RingMatrix._from_ndarray(M.ring, arr)

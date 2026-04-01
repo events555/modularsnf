@@ -1,5 +1,6 @@
 """Utilities for computing Smith normal forms over modular rings."""
 
+from numbers import Integral
 from typing import NamedTuple, Tuple
 
 import numpy as np
@@ -10,6 +11,11 @@ from .diagonal import smith_from_diagonal
 from .echelon import index1_reduce_on_columns, lemma_3_1
 from .matrix import RingMatrix
 from .ring import RingZModN
+
+try:
+    from modularsnf._rust import rust_smith_normal_form as _rust_snf
+except ImportError:
+    _rust_snf = None  # type: ignore[assignment]
 
 
 class SNFResult(NamedTuple):
@@ -41,17 +47,20 @@ def smith_normal_form_mod(
     ``list[list[int]]``.
 
     Args:
-        matrix: 2-D list of integers.  May be rectangular.
-        modulus: Integer *N* >= 2 defining the ring Z/NZ.
+        matrix: 2-D list of signed 64-bit integers. May be rectangular.
+        modulus: Signed 64-bit integer *N* >= 2 defining the ring Z/NZ.
 
     Raises:
+        OverflowError: If *modulus* or any matrix entry is outside int64.
         ValueError: If *modulus* < 2 or rows have unequal lengths.
         TypeError: If *matrix* is not a list of lists.
 
     Examples:
         >>> S, U, V = smith_normal_form_mod([[2, 4], [6, 8]], modulus=12)
     """
-    if not isinstance(modulus, int) or modulus < 2:
+    if isinstance(modulus, bool) or not isinstance(modulus, Integral):
+        raise ValueError(f"Modulus must be an integer >= 2, got {modulus!r}")
+    if int(modulus) < 2:
         raise ValueError(f"Modulus must be an integer >= 2, got {modulus!r}")
 
     if not isinstance(matrix, (list, tuple)):
@@ -107,6 +116,17 @@ def smith_normal_form(
         U = RingMatrix.identity(ring, n)
         V = RingMatrix.identity(ring, m)
         return U, V, A.copy()
+
+    if _rust_snf is not None:
+        u_arr, v_arr, s_arr = _rust_snf(
+            A.data.astype(np.int64),
+            ring.N,
+        )
+        return (
+            RingMatrix._from_ndarray(ring, u_arr),
+            RingMatrix._from_ndarray(ring, v_arr),
+            RingMatrix._from_ndarray(ring, s_arr),
+        )
 
     # If the matrix is already square, proceed without padding.
     if n == m:
@@ -454,16 +474,9 @@ def _step5_to_8_gcd_chain(
         U.apply_row_2x2(i, i + 1, 1, c, 0, 1)
 
         # Operation 2: Add ``q * Col[i]`` to ``Col[i+1]`` via right transform.
-        for r in range(n):
-            val_i = T.data[r, i]
-            val_ip1 = T.data[r, i + 1]
-            T.data[r, i + 1] = ring.add(val_ip1, ring.mul(q, val_i))
-
-        # Update V with the same column operation.
-        for r in range(n):
-            val_i = V.data[r, i]
-            val_ip1 = V.data[r, i + 1]
-            V.data[r, i + 1] = ring.add(val_ip1, ring.mul(q, val_i))
+        N = ring.N
+        T.data[:, i + 1] = (T.data[:, i + 1] + q * T.data[:, i]) % N
+        V.data[:, i + 1] = (V.data[:, i + 1] + q * V.data[:, i]) % N
 
     # Step 8 (Storjohann 7.3): Run the gcd reduction loop (ripple down).
 
@@ -476,17 +489,16 @@ def _step5_to_8_gcd_chain(
 
         g, s, t, u, v = ring.gcdex(pivot, target)
 
-        for r in range(n):
-            ci = T.data[r, i]
-            ck = T.data[r, col_target]
+        N = ring.N
+        ci = T.data[:, i].copy()
+        ck = T.data[:, col_target].copy()
+        T.data[:, i] = (s * ci + t * ck) % N
+        T.data[:, col_target] = (u * ci + v * ck) % N
 
-            T.data[r, i] = ring.add(ring.mul(s, ci), ring.mul(t, ck))
-            T.data[r, col_target] = ring.add(ring.mul(u, ci), ring.mul(v, ck))
-
-            vi = V.data[r, i]
-            vk = V.data[r, col_target]
-            V.data[r, i] = ring.add(ring.mul(s, vi), ring.mul(t, vk))
-            V.data[r, col_target] = ring.add(ring.mul(u, vi), ring.mul(v, vk))
+        vi = V.data[:, i].copy()
+        vk = V.data[:, col_target].copy()
+        V.data[:, i] = (s * vi + t * vk) % N
+        V.data[:, col_target] = (u * vi + v * vk) % N
 
     # Return idx_k + 1 (1-based) to match paper's "k" for Step 9
     return U, V, T, (idx_k + 1)

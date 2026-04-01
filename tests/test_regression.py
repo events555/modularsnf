@@ -326,6 +326,10 @@ class TestErrorHandling:
         with pytest.raises(ValueError, match="Modulus must be"):
             smith_normal_form_mod([[1]], modulus=-5)
 
+    def test_modulus_out_of_int64_range(self) -> None:
+        with pytest.raises(OverflowError, match="signed 64-bit"):
+            smith_normal_form_mod([[1]], modulus=10**30)
+
     def test_non_list_input(self) -> None:
         with pytest.raises(TypeError, match="list of lists"):
             smith_normal_form_mod("not a matrix", modulus=5)  # type: ignore[arg-type]
@@ -339,6 +343,10 @@ class TestErrorHandling:
         assert result.S == []
         assert result.U == []
         assert result.V == []
+
+    def test_matrix_entry_out_of_int64_range(self) -> None:
+        with pytest.raises(OverflowError, match="signed 64-bit"):
+            smith_normal_form_mod([[10**30]], modulus=5)
 
 
 class TestCoverageTargeted:

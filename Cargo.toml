@@ -1,0 +1,19 @@
+[package]
+name = "modularsnf"
+version = "0.3.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Smith Normal Form calculations over Z/N rings"
+repository = "https://github.com/events555/modularsnf"
+
+[lib]
+name = "_rust"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.24", features = ["abi3-py310"] }
+numpy = "0.24"
+ndarray = "0.16"
+
+[profile.release]
+debug = true

@@ -1,7 +1,9 @@
 import math
-import numpy as np
-from modularsnf.matrix import RingMatrix
 from itertools import product
+
+import numpy as np
+
+from modularsnf.matrix import RingMatrix
 
 
 def det_ring_matrix(M: RingMatrix) -> int:
@@ -25,7 +27,7 @@ def det_ring_matrix(M: RingMatrix) -> int:
 
     det = 0
     for j in range(n):
-        sub_rows = np.concatenate((data[1:, :j], data[1:, j+1:]), axis=1)
+        sub_rows = np.concatenate((data[1:, :j], data[1:, j + 1 :]), axis=1)
         subM = RingMatrix(ring, sub_rows)
         sub_det = det_ring_matrix(subM)
         term = ring.mul(data[0, j], sub_det)
@@ -34,6 +36,7 @@ def det_ring_matrix(M: RingMatrix) -> int:
         else:
             det = ring.sub(det, term)
     return det
+
 
 def verify_echelon_structure(T: RingMatrix) -> bool:
     """
@@ -59,7 +62,10 @@ def verify_echelon_structure(T: RingMatrix) -> bool:
             # zero row
             zero_row_seen = True
             # all subsequent rows must be zero
-            if any(not all(ring.is_zero(x) for x in T.data[rr]) for rr in range(r+1, nrows)):
+            if any(
+                not all(ring.is_zero(x) for x in T.data[rr])
+                for rr in range(r + 1, nrows)
+            ):
                 return False
         else:
             # non-zero row; we must not have seen a zero row before
@@ -70,6 +76,7 @@ def verify_echelon_structure(T: RingMatrix) -> bool:
             last_pivot_col = pivot_col
 
     return True
+
 
 def row_span(M: RingMatrix) -> set[tuple[int, ...]]:
     """
@@ -91,6 +98,7 @@ def row_span(M: RingMatrix) -> set[tuple[int, ...]]:
             vec = (vec + (alpha * row)) % N
         span.add(tuple(int(x % N) for x in vec))
     return span
+
 
 def get_normalized_invariants(M: RingMatrix) -> list[int]:
     """
