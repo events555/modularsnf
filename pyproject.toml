@@ -30,7 +30,7 @@ markers = ["perf: performance sanity checks (run with: uv run pytest -m perf)"]
 
 [tool.maturin]
 module-name = "modularsnf._rust"
-compatibility = "manylinux2014"
+compatibility = "manylinux_2_28"
 
 [tool.ruff]
 line-length = 80
