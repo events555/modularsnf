@@ -56,8 +56,16 @@ dependencies = [
 
 [[package]]
 name = "modularsnf"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
+ "ndarray",
+]
+
+[[package]]
+name = "modularsnf-py"
+version = "0.4.0"
+dependencies = [
+ "modularsnf",
  "ndarray",
  "numpy",
  "pyo3",
