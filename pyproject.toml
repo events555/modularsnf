@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "modularsnf"
-version = "0.3.0"
+version = "0.4.0"
 description = "A Python module for Smith Normal Form calculations over Z/N rings"
 readme = "README.md"
 license = "Apache-2.0"
@@ -29,6 +29,7 @@ testpaths = [
 markers = ["perf: performance sanity checks (run with: uv run pytest -m perf)"]
 
 [tool.maturin]
+manifest-path = "crates/modularsnf-py/Cargo.toml"
 module-name = "modularsnf._rust"
 compatibility = "manylinux_2_28"
 
