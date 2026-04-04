@@ -1,5 +1,5 @@
-# Run all checks (lint, typecheck, test+coverage)
-check: lint typecheck test
+# Run all checks (lint, typecheck, test+coverage, version parity)
+check: lint typecheck test check-version
 
 lint:
     uv run ruff check .
@@ -10,6 +10,14 @@ typecheck:
 test:
     uv run pytest tests/ -x --backend python
     uv run pytest tests/ -x --backend rust
+
+# Verify Cargo workspace and pyproject.toml versions match
+check-version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')
+    py=$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)"/\1/')
+    if [ "$cargo" != "$py" ]; then echo "Version mismatch: Cargo=$cargo pyproject=$py"; exit 1; fi
 
 # Build the Rust extension (debug)
 build:
