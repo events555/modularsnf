@@ -1,0 +1,13 @@
+[package]
+name = "modularsnf"
+version = "0.4.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Smith Normal Form calculations over Z/N rings"
+repository = "https://github.com/events555/modularsnf"
+
+[lib]
+name = "modularsnf"
+
+[dependencies]
+ndarray = "0.16"
