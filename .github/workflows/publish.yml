@@ -131,3 +131,17 @@ jobs:
                   name: sdist
                   path: dist
             - uses: pypa/gh-action-pypi-publish@release/v1
+
+    publish-crates:
+        name: Publish To crates.io
+        needs: check-dist
+        if: github.ref == 'refs/heads/main'
+        runs-on: ubuntu-24.04
+        environment: pypi
+        steps:
+            - uses: actions/checkout@v5
+            - uses: dtolnay/rust-toolchain@stable
+            - name: Publish modularsnf to crates.io
+              run: cargo publish -p modularsnf
+              env:
+                  CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
