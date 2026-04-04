@@ -1,8 +1,8 @@
 //! Row-echelon utilities — Rust port of modularsnf/echelon.py.
 
-use numpy::ndarray::Array2;
+use ndarray::Array2;
 
-use crate::ring::{posmod_i128, RustRingZModN};
+use crate::ring::{posmod_i128, RingZModN};
 
 /// Apply a 2x2 row transform to rows r0, r1 of both matrices.
 /// [s t] [row_r0]   [new_r0]
@@ -46,7 +46,7 @@ pub fn apply_row_2x2_pair(
 
 /// Lemma 3.1: row-echelon form via extended GCD elimination.
 /// Returns (U, T, rank).
-pub fn lemma_3_1(a: &Array2<i64>, ring: &RustRingZModN) -> (Array2<i64>, Array2<i64>, usize) {
+pub fn lemma_3_1(a: &Array2<i64>, ring: &RingZModN) -> (Array2<i64>, Array2<i64>, usize) {
     let n_mod = ring.n();
     let n_rows = a.nrows();
     let n_cols = a.ncols();
@@ -65,15 +65,15 @@ pub fn lemma_3_1(a: &Array2<i64>, ring: &RustRingZModN) -> (Array2<i64>, Array2<
             let a_val = t[[r, k]];
             let b_val = t[[i, k]];
 
-            if ring.is_zero_internal(b_val) {
+            if ring.is_zero(b_val) {
                 continue;
             }
 
-            let (_, s, tv, uv, v) = ring.gcdex_internal(a_val, b_val);
+            let (_, s, tv, uv, v) = ring.gcdex(a_val, b_val);
             apply_row_2x2_pair(&mut t, &mut u, r, i, s, tv, uv, v, n_mod);
         }
 
-        if !ring.is_zero_internal(t[[r, k]]) {
+        if !ring.is_zero(t[[r, k]]) {
             r += 1;
         }
     }
@@ -86,7 +86,7 @@ pub fn lemma_3_1(a: &Array2<i64>, ring: &RustRingZModN) -> (Array2<i64>, Array2<
 pub fn index1_reduce_on_columns(
     a: &Array2<i64>,
     k: usize,
-    ring: &RustRingZModN,
+    ring: &RingZModN,
 ) -> (Array2<i64>, Array2<i64>) {
     let n_mod = ring.n();
     let n = a.nrows();
@@ -98,11 +98,11 @@ pub fn index1_reduce_on_columns(
         let sj = t[[j, j]];
         for i in 0..j {
             let x = t[[i, j]];
-            if ring.is_zero_internal(x) {
+            if ring.is_zero(x) {
                 continue;
             }
             let rem = {
-                let b_ass = ring.gcd_internal(sj, 0);
+                let b_ass = ring.gcd(sj, 0);
                 let x_val = ((x % n_mod) + n_mod) % n_mod;
                 if b_ass == 0 {
                     x_val
@@ -111,7 +111,7 @@ pub fn index1_reduce_on_columns(
                 }
             };
             let diff = ((x - rem) % n_mod + n_mod) % n_mod;
-            let quo = ring.div_internal(diff, sj).unwrap_or(0);
+            let quo = ring.div(diff, sj).unwrap_or(0);
             let phi = ((-quo) % n_mod + n_mod) % n_mod;
 
             let cols = t.ncols();

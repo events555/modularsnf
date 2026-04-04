@@ -1,11 +1,11 @@
 //! Smith Normal Form pipeline — Rust port of modularsnf/snf.py.
 
-use numpy::ndarray::{s, Array2};
+use ndarray::{s, Array2};
 
 use crate::band::{band_reduction, compute_upper_bandwidth};
 use crate::diagonal::matmul_mod;
 use crate::echelon::{apply_row_2x2_pair, index1_reduce_on_columns, lemma_3_1};
-use crate::ring::{posmod_i128, RustRingZModN};
+use crate::ring::{posmod_i128, RingZModN};
 
 /// Positive modulo.
 #[inline]
@@ -17,7 +17,7 @@ fn posmod(a: i64, n: i64) -> i64 {
 /// Returns (U, V, S) such that S = U @ A @ V.
 pub fn smith_square(
     a: &Array2<i64>,
-    ring: &RustRingZModN,
+    ring: &RingZModN,
 ) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
     let n_mod = ring.n();
     let n = a.nrows();
@@ -55,7 +55,7 @@ pub fn smith_square(
 /// Smith form for a 2-banded square matrix.
 fn smith_from_upper_2_banded(
     a: &Array2<i64>,
-    ring: &RustRingZModN,
+    ring: &RingZModN,
 ) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
     let n_mod = ring.n();
     let n = a.nrows();
@@ -115,7 +115,7 @@ fn smith_from_upper_2_banded(
 /// Step 1: split 2-banded matrix into spike + principal blocks.
 fn step1_split_with_spike(
     a: &Array2<i64>,
-    ring: &RustRingZModN,
+    ring: &RingZModN,
 ) -> (Array2<i64>, Array2<i64>, Array2<i64>, usize, usize) {
     let n_mod = ring.n();
     let n = a.nrows();
@@ -130,7 +130,7 @@ fn step1_split_with_spike(
         let (r0, r1) = (k - 1, k);
         let a_val = t[[r0, k]];
         let b_val = t[[r1, k]];
-        let (_, s, tv, uv, v) = ring.gcdex_internal(a_val, b_val);
+        let (_, s, tv, uv, v) = ring.gcdex(a_val, b_val);
         // Note: swapped order (u,v,s,t) vs (s,t,u,v) per Python code
         apply_row_2x2_pair(&mut t, &mut u, r0, r1, uv, v, s, tv, n_mod);
     }
@@ -140,7 +140,7 @@ fn step1_split_with_spike(
         let (r0, r1) = (k, k + 1);
         let a_val = t[[r0, k]];
         let b_val = t[[r1, k]];
-        let (_, s, tv, uv, v) = ring.gcdex_internal(a_val, b_val);
+        let (_, s, tv, uv, v) = ring.gcdex(a_val, b_val);
         apply_row_2x2_pair(&mut t, &mut u, r0, r1, s, tv, uv, v, n_mod);
     }
 
@@ -153,7 +153,7 @@ fn step2_recursive_blocks(
     a: &Array2<i64>,
     n1: usize,
     _n2: usize,
-    ring: &RustRingZModN,
+    ring: &RingZModN,
 ) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
     let n_mod = ring.n();
     let n = a.nrows();
@@ -223,7 +223,7 @@ fn step3_permute(a: &Array2<i64>, n1: usize) -> (Array2<i64>, Array2<i64>, Array
 /// Step 4: diagonalize (n-1) x (n-1) principal block.
 fn step4_smith_on_n_minus_1(
     a: &Array2<i64>,
-    ring: &RustRingZModN,
+    ring: &RingZModN,
 ) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
     let n_mod = ring.n();
     let n = a.nrows();
@@ -231,8 +231,8 @@ fn step4_smith_on_n_minus_1(
     let b = a.slice(s![..n - 1, ..n - 1]).to_owned();
 
     // Use diagonal SNF
-    use crate::diagonal::smith_from_diagonal_internal;
-    let (u_loc, v_loc, _s_loc) = smith_from_diagonal_internal(&b, ring);
+    use crate::diagonal::smith_from_diagonal;
+    let (u_loc, v_loc, _s_loc) = smith_from_diagonal(&b, ring);
 
     let mut u = Array2::<i64>::eye(n);
     let mut v = Array2::<i64>::eye(n);
@@ -246,7 +246,7 @@ fn step4_smith_on_n_minus_1(
 /// Steps 5-8: gcd chain.
 fn step5_to_8_gcd_chain(
     a: &Array2<i64>,
-    ring: &RustRingZModN,
+    ring: &RingZModN,
 ) -> (Array2<i64>, Array2<i64>, Array2<i64>, usize) {
     let n_mod = ring.n();
     let n = a.nrows();
@@ -258,7 +258,7 @@ fn step5_to_8_gcd_chain(
     // Find idx_k: first zero diagonal entry
     let mut idx_k = n - 1;
     for i in 0..n - 1 {
-        if ring.is_zero_internal(t[[i, i]]) {
+        if ring.is_zero(t[[i, i]]) {
             idx_k = i;
             break;
         }
@@ -269,11 +269,11 @@ fn step5_to_8_gcd_chain(
     // Step 5: eliminate entries below idx_k in last column
     for row in idx_k + 1..n {
         let target_val = t[[row, last_col]];
-        if ring.is_zero_internal(target_val) {
+        if ring.is_zero(target_val) {
             continue;
         }
         let pivot_val = t[[idx_k, last_col]];
-        let (_, s, tv, uv, vv) = ring.gcdex_internal(pivot_val, target_val);
+        let (_, s, tv, uv, vv) = ring.gcdex(pivot_val, target_val);
         apply_row_2x2_pair(&mut t, &mut u, idx_k, row, s, tv, uv, vv, n_mod);
     }
 
@@ -300,11 +300,11 @@ fn step5_to_8_gcd_chain(
 
         // stab
         let c = {
-            let target_gcd = ring.gcd_internal(a_ik, ring.gcd_internal(a_i1k, a_ii));
+            let target_gcd = ring.gcd(a_ik, ring.gcd(a_i1k, a_ii));
             let mut found = 0i64;
             for x in 0..n_mod {
                 let candidate = posmod_i128((a_ik as i128) + (x as i128) * (a_i1k as i128), n_mod);
-                let current = ring.gcd_internal(candidate, a_ii);
+                let current = ring.gcd(candidate, a_ii);
                 if current == target_gcd {
                     found = x;
                     break;
@@ -317,7 +317,7 @@ fn step5_to_8_gcd_chain(
         let numerator = posmod_i128((c as i128) * (s_next as i128), n_mod);
 
         // quo
-        let a_ii_ass = ring.gcd_internal(a_ii, 0);
+        let a_ii_ass = ring.gcd(a_ii, 0);
         let num_mod = posmod(numerator, n_mod);
         let rem = if a_ii_ass == 0 {
             num_mod
@@ -325,7 +325,7 @@ fn step5_to_8_gcd_chain(
             num_mod % a_ii_ass
         };
         let diff = posmod(num_mod - rem, n_mod);
-        let q_raw = ring.div_internal(diff, a_ii).unwrap_or(0);
+        let q_raw = ring.div(diff, a_ii).unwrap_or(0);
         let q = posmod(-q_raw, n_mod);
 
         // Op 1: add c * row[i+1] to row[i]
@@ -349,11 +349,11 @@ fn step5_to_8_gcd_chain(
         let pivot = t[[i, i]];
         let target = t[[i, col_target]];
 
-        if ring.is_zero_internal(target) {
+        if ring.is_zero(target) {
             continue;
         }
 
-        let (_, s, tv, uv, vv) = ring.gcdex_internal(pivot, target);
+        let (_, s, tv, uv, vv) = ring.gcdex(pivot, target);
 
         // Column operations
         for row in 0..n {
@@ -388,7 +388,7 @@ fn step5_to_8_gcd_chain(
 fn step9_index_reduction(
     a: &Array2<i64>,
     k: usize,
-    ring: &RustRingZModN,
+    ring: &RingZModN,
 ) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
     let n_mod = ring.n();
     let n = a.nrows();
