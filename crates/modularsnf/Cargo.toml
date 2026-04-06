@@ -11,3 +11,12 @@ name = "modularsnf"
 
 [dependencies]
 ndarray = "0.16"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"
+rand_chacha = "0.3"
+
+[[bench]]
+name = "bench_modulus"
+harness = false
