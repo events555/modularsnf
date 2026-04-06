@@ -37,29 +37,51 @@ fn gcd_raw(a: i64, b: i64) -> i64 {
 /// Positive modulo — always returns value in [0, n).
 #[inline]
 fn posmod(a: i64, n: i64) -> i64 {
-    ((a % n) + n) % n
+    let r = a % n;
+    if r < 0 { r + n } else { r }
 }
 
 /// Positive modulo for widened intermediates.
 #[inline]
 pub(crate) fn posmod_i128(a: i128, n: i64) -> i64 {
     let n128 = n as i128;
-    (((a % n128) + n128) % n128) as i64
+    let r = a % n128;
+    (if r < 0 { r + n128 } else { r }) as i64
 }
 
+/// Modular addition for inputs already in [0, n).
+///
+/// Since a, b ∈ [0, n), their sum is in [0, 2n-2].
+/// A single conditional subtraction replaces i128 division.
 #[inline]
 pub(crate) fn add_mod(a: i64, b: i64, n: i64) -> i64 {
-    posmod_i128(a as i128 + b as i128, n)
+    let s = a + b;
+    if s >= n { s - n } else { s }
 }
 
+/// Modular subtraction for inputs already in [0, n).
+///
+/// Since a, b ∈ [0, n), their difference is in [-(n-1), n-1].
+/// A single conditional addition replaces i128 division.
 #[inline]
 pub(crate) fn sub_mod(a: i64, b: i64, n: i64) -> i64 {
-    posmod_i128(a as i128 - b as i128, n)
+    let d = a - b;
+    if d < 0 { d + n } else { d }
 }
 
+/// Modular multiplication for inputs already in [0, n).
+///
+/// For n < 2^31 (covers all practical moduli), a*b fits in i64.
+/// Uses i64 `%` instead of expensive i128 `__modti3`.
 #[inline]
 pub(crate) fn mul_mod(a: i64, b: i64, n: i64) -> i64 {
-    posmod_i128((a as i128) * (b as i128), n)
+    // For n < 2^31, (n-1)^2 < 2^62 which fits in i64.
+    // For larger n, widen to i128 to avoid overflow.
+    if n < (1i64 << 31) {
+        (a * b) % n
+    } else {
+        posmod_i128((a as i128) * (b as i128), n)
+    }
 }
 
 pub struct RingZModN {

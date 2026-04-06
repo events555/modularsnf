@@ -10,7 +10,8 @@ use crate::ring::{mul_mod, posmod_i128, RingZModN};
 /// Positive modulo.
 #[inline]
 fn posmod(a: i64, n: i64) -> i64 {
-    posmod_i128(a as i128, n)
+    let r = a % n;
+    if r < 0 { r + n } else { r }
 }
 
 /// Merge two scalar SNF entries. Returns (U, V, S) as 2x2 arrays.
@@ -83,6 +84,9 @@ pub fn matmul_mod(a: &Array2<i64>, b: &Array2<i64>, n: i64) -> Array2<i64> {
 }
 
 /// BLAS-backed matmul_mod: cast to f64, call dgemm, cast back, reduce mod n.
+///
+/// All inputs are in [0, n), so all dot-product results are non-negative.
+/// We use simple i64 `%` instead of expensive i128 posmod.
 #[cfg(feature = "blas")]
 fn matmul_mod_blas(a: &Array2<i64>, b: &Array2<i64>, n: i64) -> Array2<i64> {
     use ndarray::Array2 as A2;
@@ -95,15 +99,16 @@ fn matmul_mod_blas(a: &Array2<i64>, b: &Array2<i64>, n: i64) -> Array2<i64> {
     let c_f: A2<f64> = a_f.dot(&b_f);
 
     // Convert back to i64 and reduce mod n.
-    c_f.mapv(|v| {
-        let iv = v as i64;
-        posmod_i128(iv as i128, n)
-    })
+    // Results are non-negative (inputs in [0, n)), so plain % suffices.
+    c_f.mapv(|v| (v as i64) % n)
 }
 
 /// Pure-integer matmul_mod fallback.
 ///
-/// Uses row-major iteration with a zero-skip optimisation.
+/// Uses lazy reduction: accumulates the full dot product in i128, then
+/// reduces mod n once per output element. For small n (< 256) and any
+/// practical matrix dimension, the i128 accumulator never overflows
+/// (worst case: (n-1)^2 * inner_dim ≪ 2^127).
 fn matmul_mod_integer(a: &Array2<i64>, b: &Array2<i64>, n: i64) -> Array2<i64> {
     let rows = a.nrows();
     let cols = b.ncols();
@@ -111,16 +116,12 @@ fn matmul_mod_integer(a: &Array2<i64>, b: &Array2<i64>, n: i64) -> Array2<i64> {
     let mut c = Array2::zeros((rows, cols));
     for i in 0..rows {
         let a_row = a.row(i);
-        let mut c_row = c.row_mut(i);
-        for k in 0..inner {
-            let a_ik = a_row[k];
-            if a_ik == 0 {
-                continue;
+        for j in 0..cols {
+            let mut acc: i128 = 0;
+            for k in 0..inner {
+                acc += a_row[k] as i128 * b[[k, j]] as i128;
             }
-            let b_row = b.row(k);
-            for j in 0..cols {
-                c_row[j] = posmod_i128((c_row[j] as i128) + (a_ik as i128) * (b_row[j] as i128), n);
-            }
+            c[[i, j]] = posmod_i128(acc, n);
         }
     }
     c
@@ -200,10 +201,14 @@ fn right_apply_block_pair(
 }
 
 /// Element-wise (A + B) % n.
+///
+/// Inputs are already in [0, n), so sum is in [0, 2n-2].
+/// A conditional subtraction replaces i128 division.
 fn matmul_mod_add(a: &Array2<i64>, b: &Array2<i64>, n: i64) -> Array2<i64> {
     let mut c = a.clone();
     c.zip_mut_with(b, |x, &y| {
-        *x = posmod_i128((*x as i128) + (y as i128), n);
+        let s = *x + y;
+        *x = if s >= n { s - n } else { s };
     });
     c
 }
