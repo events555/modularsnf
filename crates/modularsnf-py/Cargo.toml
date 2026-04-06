@@ -11,6 +11,10 @@ publish = false
 name = "_rust"
 crate-type = ["cdylib"]
 
+[features]
+default = ["blas"]
+blas = ["modularsnf/blas"]
+
 [dependencies]
 modularsnf = { path = "../modularsnf" }
 pyo3 = { version = "0.24", features = ["abi3-py310", "extension-module"] }
