@@ -25,8 +25,8 @@ fn random_matrix(rows: usize, cols: usize, n: i64, rng: &mut ChaCha8Rng) -> Arra
 
 fn bench_matmul_mod(c: &mut Criterion) {
     let mut group = c.benchmark_group("matmul_mod");
-    let sizes: &[usize] = &[8, 16, 32, 64];
-    let moduli: &[i64] = &[7, 12, 127, 255];
+    let sizes: &[usize] = &[8, 16, 32, 64, 128, 256, 512];
+    let moduli: &[i64] = &[7, 127, 255];
 
     for &size in sizes {
         for &n in moduli {
