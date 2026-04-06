@@ -1,3 +1,9 @@
+// Link the BLAS provider so that ndarray's cblas-sys symbols resolve.
+#[cfg(feature = "blas")]
+extern crate blas_src;
+#[cfg(feature = "blas")]
+extern crate openblas_src;
+
 pub mod band;
 pub mod diagonal;
 pub mod echelon;

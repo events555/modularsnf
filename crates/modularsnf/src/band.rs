@@ -9,7 +9,8 @@ use crate::ring::RingZModN;
 /// Positive modulo helper.
 #[inline]
 fn posmod(a: i64, n: i64) -> i64 {
-    ((a % n) + n) % n
+    let r = a % n;
+    if r < 0 { r + n } else { r }
 }
 
 /// Right-apply a block: M[:, start..start+k] = M[:, start..start+k] @ block

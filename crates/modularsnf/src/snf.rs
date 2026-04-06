@@ -5,12 +5,74 @@ use ndarray::{s, Array2};
 use crate::band::{band_reduction, compute_upper_bandwidth};
 use crate::diagonal::matmul_mod;
 use crate::echelon::{apply_row_2x2_pair, index1_reduce_on_columns, lemma_3_1};
-use crate::ring::{posmod_i128, RingZModN};
+use crate::ring::{mul_mod, posmod_i128, RingZModN};
 
 /// Positive modulo.
 #[inline]
 fn posmod(a: i64, n: i64) -> i64 {
-    posmod_i128(a as i128, n)
+    let r = a % n;
+    if r < 0 { r + n } else { r }
+}
+
+/// Apply a 2×2 column transform to columns c0, c1 of a matrix.
+///
+/// For small n (< 2^31), uses i64 arithmetic.
+#[inline]
+fn apply_col_2x2(
+    m: &mut Array2<i64>,
+    c0: usize,
+    c1: usize,
+    s: i64,
+    t: i64,
+    u: i64,
+    v: i64,
+    n: i64,
+) {
+    let rows = m.nrows();
+    if n < (1i64 << 31) {
+        for row in 0..rows {
+            let a = m[[row, c0]];
+            let b = m[[row, c1]];
+            let new_c0 = (s * a + t * b) % n;
+            let new_c1 = (u * a + v * b) % n;
+            m[[row, c0]] = if new_c0 < 0 { new_c0 + n } else { new_c0 };
+            m[[row, c1]] = if new_c1 < 0 { new_c1 + n } else { new_c1 };
+        }
+    } else {
+        for row in 0..rows {
+            let a = m[[row, c0]];
+            let b = m[[row, c1]];
+            m[[row, c0]] =
+                posmod_i128((s as i128) * (a as i128) + (t as i128) * (b as i128), n);
+            m[[row, c1]] =
+                posmod_i128((u as i128) * (a as i128) + (v as i128) * (b as i128), n);
+        }
+    }
+}
+
+/// Add phi * col[src] to col[dst] for two matrices.
+#[inline]
+fn add_col_scaled(
+    m: &mut Array2<i64>,
+    dst: usize,
+    src: usize,
+    phi: i64,
+    n: i64,
+) {
+    let rows = m.nrows();
+    if n < (1i64 << 31) {
+        for row in 0..rows {
+            let val = (m[[row, dst]] + phi * m[[row, src]]) % n;
+            m[[row, dst]] = if val < 0 { val + n } else { val };
+        }
+    } else {
+        for row in 0..rows {
+            m[[row, dst]] = posmod_i128(
+                (m[[row, dst]] as i128) + (phi as i128) * (m[[row, src]] as i128),
+                n,
+            );
+        }
+    }
 }
 
 /// Top-level SNF for a square matrix.
@@ -179,7 +241,6 @@ fn step2_recursive_blocks(
 
 /// Step 3: permute spike to last row/column.
 fn step3_permute(a: &Array2<i64>, n1: usize) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
-    let n_mod = 0i64; // permutation matrices don't need mod
     let n = a.nrows();
 
     let mut perm = Array2::zeros((n, n));
@@ -195,19 +256,15 @@ fn step3_permute(a: &Array2<i64>, n1: usize) -> (Array2<i64>, Array2<i64>, Array
     }
     let perm_t = perm.t().to_owned();
 
-    // For permutation matrices, use any large modulus (entries are 0 or 1)
-    let _ = n_mod;
-    // A3 = P @ A @ P^T — since P is a permutation, we can just rearrange
+    // A3 = P @ A @ P^T — permutation rearrangement
     let mut a3 = Array2::zeros((n, n));
     for i in 0..n {
         for j in 0..n {
             let mut sum = 0i64;
             for k in 0..n {
-                // P[i,k] is 0 or 1
                 if perm[[i, k]] != 0 {
                     for l in 0..n {
                         if perm_t[[l, j]] != 0 {
-                            // perm_t = perm.T, so perm_t[l,j] = perm[j,l]
                             sum += a[[k, l]];
                         }
                     }
@@ -303,7 +360,8 @@ fn step5_to_8_gcd_chain(
             let target_gcd = ring.gcd(a_ik, ring.gcd(a_i1k, a_ii));
             let mut found = 0i64;
             for x in 0..n_mod {
-                let candidate = posmod_i128((a_ik as i128) + (x as i128) * (a_i1k as i128), n_mod);
+                let candidate = mul_mod(x, a_i1k, n_mod);
+                let candidate = posmod((a_ik as i64).wrapping_add(candidate), n_mod);
                 let current = ring.gcd(candidate, a_ii);
                 if current == target_gcd {
                     found = x;
@@ -314,7 +372,7 @@ fn step5_to_8_gcd_chain(
         };
 
         let s_next = t[[i + 1, i + 1]];
-        let numerator = posmod_i128((c as i128) * (s_next as i128), n_mod);
+        let numerator = mul_mod(c, s_next, n_mod);
 
         // quo
         let a_ii_ass = ring.gcd(a_ii, 0);
@@ -332,16 +390,8 @@ fn step5_to_8_gcd_chain(
         apply_row_2x2_pair(&mut t, &mut u, i, i + 1, 1, c, 0, 1, n_mod);
 
         // Op 2: add q * col[i] to col[i+1]
-        for row in 0..n {
-            t[[row, i + 1]] = posmod_i128(
-                (t[[row, i + 1]] as i128) + (q as i128) * (t[[row, i]] as i128),
-                n_mod,
-            );
-            v[[row, i + 1]] = posmod_i128(
-                (v[[row, i + 1]] as i128) + (q as i128) * (v[[row, i]] as i128),
-                n_mod,
-            );
-        }
+        add_col_scaled(&mut t, i + 1, i, q, n_mod);
+        add_col_scaled(&mut v, i + 1, i, q, n_mod);
     }
 
     // Step 8: gcd reduction loop (ripple down)
@@ -355,30 +405,9 @@ fn step5_to_8_gcd_chain(
 
         let (_, s, tv, uv, vv) = ring.gcdex(pivot, target);
 
-        // Column operations
-        for row in 0..n {
-            let ci = t[[row, i]];
-            let ck = t[[row, col_target]];
-            t[[row, i]] = posmod_i128(
-                (s as i128) * (ci as i128) + (tv as i128) * (ck as i128),
-                n_mod,
-            );
-            t[[row, col_target]] = posmod_i128(
-                (uv as i128) * (ci as i128) + (vv as i128) * (ck as i128),
-                n_mod,
-            );
-
-            let vi = v[[row, i]];
-            let vk = v[[row, col_target]];
-            v[[row, i]] = posmod_i128(
-                (s as i128) * (vi as i128) + (tv as i128) * (vk as i128),
-                n_mod,
-            );
-            v[[row, col_target]] = posmod_i128(
-                (uv as i128) * (vi as i128) + (vv as i128) * (vk as i128),
-                n_mod,
-            );
-        }
+        // Column operations on both t and v
+        apply_col_2x2(&mut t, i, col_target, s, tv, uv, vv, n_mod);
+        apply_col_2x2(&mut v, i, col_target, s, tv, uv, vv, n_mod);
     }
 
     (u, v, t, idx_k + 1)

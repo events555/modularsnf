@@ -15,7 +15,7 @@ blas = ["ndarray/blas", "dep:blas-src", "dep:openblas-src"]
 [dependencies]
 ndarray = "0.16"
 blas-src = { version = "0.10", optional = true, features = ["openblas"] }
-openblas-src = { version = "0.10", optional = true, features = ["cblas", "system", "static"] }
+openblas-src = { version = "0.10", optional = true, features = ["system"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
