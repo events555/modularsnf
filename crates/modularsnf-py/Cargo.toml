@@ -12,6 +12,7 @@ name = "_rust"
 crate-type = ["cdylib"]
 
 [features]
+default = ["blas"]
 blas = ["modularsnf/blas"]
 
 [dependencies]

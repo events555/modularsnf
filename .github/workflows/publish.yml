@@ -4,6 +4,10 @@ on:
     push:
         branches: [main, dev]
 
+env:
+    # Pin vcpkg commit for reproducible Windows builds
+    VCPKG_COMMITTED_ID: 4e08971f3ddc13018ca858a692f5b1b4b9aab4f4
+
 jobs:
     build-wheels:
         name: Build Wheels (${{ matrix.name }})
@@ -37,18 +41,31 @@ jobs:
                       target: x86_64-pc-windows-msvc
                       manylinux: ""
                       interpreter: ""
+                      vcpkg_triplet: x64-windows-static-md
                     - name: windows-aarch64
                       os: windows-11-arm
                       target: aarch64-pc-windows-msvc
                       manylinux: ""
                       interpreter: ""
+                      vcpkg_triplet: arm64-windows-static-md
         steps:
             - uses: actions/checkout@v5
+
+            - name: Install OpenBLAS (macOS)
+              if: runner.os == 'macOS'
+              run: brew install openblas
+
+            - name: Install OpenBLAS (Windows)
+              if: runner.os == 'Windows'
+              run: vcpkg install openblas:${{ matrix.vcpkg_triplet }}
+
             - uses: PyO3/maturin-action@v1
               with:
                   target: ${{ matrix.target }}
                   manylinux: ${{ matrix.manylinux }}
                   args: --release --out dist ${{ matrix.interpreter }}
+                  before-script-linux: yum install -y openblas-devel
+
             - uses: actions/upload-artifact@v5
               with:
                   name: wheels-${{ matrix.name }}

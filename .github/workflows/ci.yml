@@ -17,5 +17,3 @@ jobs:
             - uses: extractions/setup-just@v2
             - run: uv sync --extra dev
             - run: just check
-              env:
-                  MATURIN_PEP517_ARGS: "--features blas"
