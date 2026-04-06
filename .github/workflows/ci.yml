@@ -8,6 +8,8 @@ jobs:
                 python-version: ["3.10", "3.12"]
         steps:
             - uses: actions/checkout@v5
+            - name: Install OpenBLAS
+              run: sudo apt-get update && sudo apt-get install -y libopenblas-dev
             - uses: dtolnay/rust-toolchain@stable
             - uses: astral-sh/setup-uv@v5
               with:
@@ -15,3 +17,5 @@ jobs:
             - uses: extractions/setup-just@v2
             - run: uv sync --extra dev
             - run: just check
+              env:
+                  MATURIN_PEP517_ARGS: "--features blas"
