@@ -240,39 +240,43 @@ fn step2_recursive_blocks(
 }
 
 /// Step 3: permute spike to last row/column.
+///
+/// The permutation moves row/col n1 to the end and shifts
+/// rows/cols [n1+1..n) up by one. This is just an index remap.
 fn step3_permute(a: &Array2<i64>, n1: usize) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
     let n = a.nrows();
 
+    // Build permutation mapping: new_index → old_index
+    let mut fwd = vec![0usize; n]; // fwd[new] = old
+    for i in 0..n1 {
+        fwd[i] = i;
+    }
+    fwd[n - 1] = n1;
+    for i in n1 + 1..n {
+        fwd[i - 1] = i;
+    }
+
+    // Build inverse: old_index → new_index
+    let mut inv = vec![0usize; n];
+    for (new_i, &old_i) in fwd.iter().enumerate() {
+        inv[old_i] = new_i;
+    }
+
+    // A3[i, j] = A[fwd[i], fwd[j]] — O(n²) index remap
+    let mut a3 = Array2::zeros((n, n));
+    for i in 0..n {
+        let old_i = fwd[i];
+        for j in 0..n {
+            a3[[i, j]] = a[[old_i, fwd[j]]];
+        }
+    }
+
+    // Build permutation matrices (needed by callers for transform composition)
     let mut perm = Array2::zeros((n, n));
-    for old_i in 0..n {
-        let new_i = if old_i < n1 {
-            old_i
-        } else if old_i == n1 {
-            n - 1
-        } else {
-            old_i - 1
-        };
+    for (new_i, &old_i) in fwd.iter().enumerate() {
         perm[[new_i, old_i]] = 1;
     }
     let perm_t = perm.t().to_owned();
-
-    // A3 = P @ A @ P^T — permutation rearrangement
-    let mut a3 = Array2::zeros((n, n));
-    for i in 0..n {
-        for j in 0..n {
-            let mut sum = 0i64;
-            for k in 0..n {
-                if perm[[i, k]] != 0 {
-                    for l in 0..n {
-                        if perm_t[[l, j]] != 0 {
-                            sum += a[[k, l]];
-                        }
-                    }
-                }
-            }
-            a3[[i, j]] = sum;
-        }
-    }
 
     (perm, perm_t, a3)
 }
