@@ -68,15 +68,21 @@ fn blas_safe(n: i64, inner: usize) -> bool {
     }
 }
 
+/// Minimum dimension to dispatch to BLAS GEMM.
+/// Below this, the f64 cast + BLAS call overhead exceeds the benefit.
+#[cfg(feature = "blas")]
+const BLAS_MIN_DIM: usize = 32;
+
 /// Matrix multiply with mod reduction. C = (A @ B) % n.
 ///
 /// When the `blas` feature is enabled and the modulus is small enough for
-/// float64 to be exact, delegates to BLAS `dgemm` for a dramatic speedup
-/// (100–400× at large sizes).  Otherwise falls back to a safe integer loop.
+/// float64 to be exact AND the matrix is large enough, delegates to BLAS
+/// `dgemm`. Otherwise falls back to a safe integer loop.
 pub fn matmul_mod(a: &Array2<i64>, b: &Array2<i64>, n: i64) -> Array2<i64> {
     #[cfg(feature = "blas")]
     {
-        if blas_safe(n, a.ncols()) {
+        let dim = a.nrows().max(a.ncols()).max(b.ncols());
+        if dim >= BLAS_MIN_DIM && blas_safe(n, a.ncols()) {
             return matmul_mod_blas(a, b, n);
         }
     }

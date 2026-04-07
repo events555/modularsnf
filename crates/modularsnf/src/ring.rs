@@ -1,6 +1,13 @@
 //! Modular arithmetic for Z/NZ — Rust port of modularsnf/ring.py.
 //!
 //! All operations match Storjohann's Dissertation Section 1.1.
+//!
+//! For small moduli (N < 128), precomputes lookup tables for gcdex
+//! (all N² input pairs) and modular reduction, eliminating computation
+//! from the hot path entirely.
+
+/// Maximum modulus for which we precompute gcdex and mod LUTs.
+const LUT_MAX: i64 = 128;
 
 /// Extended GCD: returns (g, x, y) such that a*x + b*y = g.
 #[inline]
@@ -50,9 +57,6 @@ pub(crate) fn posmod_i128(a: i128, n: i64) -> i64 {
 }
 
 /// Modular addition for inputs already in [0, n).
-///
-/// Since a, b ∈ [0, n), their sum is in [0, 2n-2].
-/// A single conditional subtraction replaces i128 division.
 #[inline]
 pub(crate) fn add_mod(a: i64, b: i64, n: i64) -> i64 {
     let s = a + b;
@@ -60,9 +64,6 @@ pub(crate) fn add_mod(a: i64, b: i64, n: i64) -> i64 {
 }
 
 /// Modular subtraction for inputs already in [0, n).
-///
-/// Since a, b ∈ [0, n), their difference is in [-(n-1), n-1].
-/// A single conditional addition replaces i128 division.
 #[inline]
 pub(crate) fn sub_mod(a: i64, b: i64, n: i64) -> i64 {
     let d = a - b;
@@ -70,13 +71,8 @@ pub(crate) fn sub_mod(a: i64, b: i64, n: i64) -> i64 {
 }
 
 /// Modular multiplication for inputs already in [0, n).
-///
-/// For n < 2^31 (covers all practical moduli), a*b fits in i64.
-/// Uses i64 `%` instead of expensive i128 `__modti3`.
 #[inline]
 pub(crate) fn mul_mod(a: i64, b: i64, n: i64) -> i64 {
-    // For n < 2^31, (n-1)^2 < 2^62 which fits in i64.
-    // For larger n, widen to i128 to avoid overflow.
     if n < (1i64 << 31) {
         (a * b) % n
     } else {
@@ -84,8 +80,78 @@ pub(crate) fn mul_mod(a: i64, b: i64, n: i64) -> i64 {
     }
 }
 
+/// Precomputed gcdex entry: (g, s, t, u, v).
+#[derive(Clone, Copy)]
+struct GcdexEntry {
+    g: i64,
+    s: i64,
+    t: i64,
+    u: i64,
+    v: i64,
+}
+
+/// Precomputed lookup tables for small moduli.
+struct SmallModLut {
+    /// Gcdex LUT: gcdex_lut[a * n + b] = gcdex(a, b) for a, b ∈ [0, n).
+    gcdex_lut: Vec<GcdexEntry>,
+    /// Modular reduction LUT: mod_lut[x] = x % n for x ∈ [0, 2*(n-1)²].
+    /// Used for fast reduction of s*a + t*b products.
+    mod_lut: Vec<i64>,
+    /// Size of the mod LUT.
+    mod_lut_size: usize,
+}
+
 pub struct RingZModN {
     n: i64,
+    lut: Option<SmallModLut>,
+}
+
+/// Compute gcdex for (a, b) in Z/n without using the LUT.
+/// This is the "slow path" used during LUT construction and for large n.
+fn gcdex_slow(a_val: i64, b_val: i64, n: i64) -> (i64, i64, i64, i64, i64) {
+    // Fast path: b is a multiple of a in Z/N
+    if a_val != 0 && (b_val % gcd_raw(a_val, n) == 0) {
+        let b_mod = posmod(b_val, n);
+        let a_mod = posmod(a_val, n);
+        let (g, x, _) = egcd(a_mod, n);
+        if g != 0 && b_mod % g == 0 {
+            let q = posmod_i128((x as i128) * ((b_mod / g) as i128), n / g);
+            return (a_mod, 1, 0, posmod(-q, n), 1);
+        }
+    }
+
+    // Standard extended Euclidean
+    let (mut r0, mut r1) = (a_val, b_val);
+    let (mut s0, mut s1) = (1i64, 0i64);
+    let (mut t0, mut t1) = (0i64, 1i64);
+
+    while r1 != 0 {
+        let q = r0 / r1;
+        let tmp = r1;
+        r1 = r0 - q * r1;
+        r0 = tmp;
+        let tmp = s1;
+        s1 = s0 - q * s1;
+        s0 = tmp;
+        let tmp = t1;
+        t1 = t0 - q * t1;
+        t0 = tmp;
+    }
+
+    if r0 == 0 {
+        return (0, 1, 0, 0, 1);
+    }
+
+    let u = -(b_val / r0);
+    let v = a_val / r0;
+
+    (
+        posmod(r0, n),
+        posmod(s0, n),
+        posmod(t0, n),
+        posmod(u, n),
+        posmod(v, n),
+    )
 }
 
 impl RingZModN {
@@ -93,12 +159,65 @@ impl RingZModN {
         if n < 2 {
             return Err("Modulus N must be >= 2".to_string());
         }
-        Ok(Self { n })
+
+        let lut = if n < LUT_MAX {
+            let n_usize = n as usize;
+
+            // Build gcdex LUT: all N² pairs
+            let mut gcdex_lut = Vec::with_capacity(n_usize * n_usize);
+            for a in 0..n {
+                for b in 0..n {
+                    let (g, s, t, u, v) = gcdex_slow(a, b, n);
+                    gcdex_lut.push(GcdexEntry { g, s, t, u, v });
+                }
+            }
+
+            // Build mod LUT for fast reduction of products.
+            // For apply_row_2x2: s*a + t*b where s,a,t,b ∈ [0, n).
+            // Max positive value: 2*(n-1)² ≈ 32258 for n=128.
+            // Min negative value: after i64 %, could be -(2*(n-1)²).
+            // We store mod results for [0, 2*(n-1)²].
+            let max_val = 2 * (n - 1) * (n - 1);
+            let mod_lut_size = (max_val + 1) as usize;
+            let mut mod_lut = Vec::with_capacity(mod_lut_size);
+            for i in 0..mod_lut_size {
+                mod_lut.push((i as i64) % n);
+            }
+
+            Some(SmallModLut {
+                gcdex_lut,
+                mod_lut,
+                mod_lut_size,
+            })
+        } else {
+            None
+        };
+
+        Ok(Self { n, lut })
     }
 
     #[inline]
     pub fn n(&self) -> i64 {
         self.n
+    }
+
+    /// Fast modular reduction using LUT when available.
+    /// Input must be non-negative and < mod_lut_size.
+    #[inline]
+    pub fn fast_mod(&self, val: i64) -> i64 {
+        if let Some(ref lut) = self.lut {
+            let v = val as usize;
+            if v < lut.mod_lut_size {
+                return unsafe { *lut.mod_lut.get_unchecked(v) };
+            }
+        }
+        val % self.n
+    }
+
+    /// Returns true if this ring has precomputed LUTs.
+    #[inline]
+    pub fn has_lut(&self) -> bool {
+        self.lut.is_some()
     }
 
     pub fn add(&self, a: i64, b: i64) -> i64 {
@@ -169,45 +288,14 @@ impl RingZModN {
         let a_val = posmod(a, self.n);
         let b_val = posmod(b, self.n);
 
-        // Fast path: b is a multiple of a in Z/N
-        if a_val != 0 && (b_val % gcd_raw(a_val, self.n) == 0) {
-            if let Ok(q) = self.div(b_val, a_val) {
-                return (a_val, 1, 0, posmod(-q, self.n), 1);
-            }
+        // LUT path for small moduli
+        if let Some(ref lut) = self.lut {
+            let idx = a_val as usize * self.n as usize + b_val as usize;
+            let e = unsafe { lut.gcdex_lut.get_unchecked(idx) };
+            return (e.g, e.s, e.t, e.u, e.v);
         }
 
-        // Standard extended Euclidean
-        let (mut r0, mut r1) = (a_val, b_val);
-        let (mut s0, mut s1) = (1i64, 0i64);
-        let (mut t0, mut t1) = (0i64, 1i64);
-
-        while r1 != 0 {
-            let q = r0 / r1;
-            let tmp = r1;
-            r1 = r0 - q * r1;
-            r0 = tmp;
-            let tmp = s1;
-            s1 = s0 - q * s1;
-            s0 = tmp;
-            let tmp = t1;
-            t1 = t0 - q * t1;
-            t0 = tmp;
-        }
-
-        if r0 == 0 {
-            return (0, 1, 0, 0, 1);
-        }
-
-        let u = -(b_val / r0);
-        let v = a_val / r0;
-
-        (
-            posmod(r0, self.n),
-            posmod(s0, self.n),
-            posmod(t0, self.n),
-            posmod(u, self.n),
-            posmod(v, self.n),
-        )
+        gcdex_slow(a_val, b_val, self.n)
     }
 
     pub fn stab(&self, a: i64, b: i64, c: i64) -> Result<i64, String> {

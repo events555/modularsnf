@@ -194,7 +194,7 @@ fn step1_split_with_spike(
         let b_val = t[[r1, k]];
         let (_, s, tv, uv, v) = ring.gcdex(a_val, b_val);
         // Note: swapped order (u,v,s,t) vs (s,t,u,v) per Python code
-        apply_row_2x2_pair(&mut t, &mut u, r0, r1, uv, v, s, tv, n_mod);
+        apply_row_2x2_pair(&mut t, &mut u, r0, r1, uv, v, s, tv, n_mod, ring);
     }
 
     // Sweep downward
@@ -203,7 +203,7 @@ fn step1_split_with_spike(
         let a_val = t[[r0, k]];
         let b_val = t[[r1, k]];
         let (_, s, tv, uv, v) = ring.gcdex(a_val, b_val);
-        apply_row_2x2_pair(&mut t, &mut u, r0, r1, s, tv, uv, v, n_mod);
+        apply_row_2x2_pair(&mut t, &mut u, r0, r1, s, tv, uv, v, n_mod, ring);
     }
 
     let v = Array2::<i64>::eye(n);
@@ -331,7 +331,7 @@ fn step5_to_8_gcd_chain(
         }
         let pivot_val = t[[idx_k, last_col]];
         let (_, s, tv, uv, vv) = ring.gcdex(pivot_val, target_val);
-        apply_row_2x2_pair(&mut t, &mut u, idx_k, row, s, tv, uv, vv, n_mod);
+        apply_row_2x2_pair(&mut t, &mut u, idx_k, row, s, tv, uv, vv, n_mod, ring);
     }
 
     // Step 6: swap columns idx_k and last_col
@@ -387,7 +387,7 @@ fn step5_to_8_gcd_chain(
         let q = posmod(-q_raw, n_mod);
 
         // Op 1: add c * row[i+1] to row[i]
-        apply_row_2x2_pair(&mut t, &mut u, i, i + 1, 1, c, 0, 1, n_mod);
+        apply_row_2x2_pair(&mut t, &mut u, i, i + 1, 1, c, 0, 1, n_mod, ring);
 
         // Op 2: add q * col[i] to col[i+1]
         add_col_scaled(&mut t, i + 1, i, q, n_mod);

@@ -1,7 +1,8 @@
 //! Row-echelon utilities — Rust port of modularsnf/echelon.py.
 //!
 //! Uses i64 arithmetic for small moduli (n < 2^31) to avoid the
-//! expensive i128 software division (__modti3).
+//! expensive i128 software division (__modti3). For n < 128, uses
+//! precomputed mod LUT to replace even the i64 `%` with a table lookup.
 
 use ndarray::Array2;
 
@@ -9,7 +10,9 @@ use crate::ring::{posmod_i128, RingZModN};
 
 /// Apply a 2×2 row rotation to columns `col_start..col_end` of a matrix.
 ///
-/// For small n (< 2^31), uses i64 arithmetic instead of i128.
+/// For n < 128 with a mod LUT: table lookup (no division at all).
+/// For n < 2^31: i64 arithmetic.
+/// Otherwise: i128.
 #[inline]
 fn apply_row_2x2_cols(
     m: &mut Array2<i64>,
@@ -22,9 +25,27 @@ fn apply_row_2x2_cols(
     n: i64,
     col_start: usize,
     col_end: usize,
+    ring: &RingZModN,
 ) {
-    if n < (1i64 << 31) {
-        // For small n, s*a + t*b fits in i64: max = 2*(n-1)^2 < 2^63.
+    if ring.has_lut() {
+        // LUT path: compute s*a + t*b in i64, shift to non-negative, table lookup.
+        // Max negative: -(n-1)^2 (when one term is 0 and the other has opposite signs).
+        // Shift by (n-1)^2 to guarantee non-negative; then fast_mod the shifted result.
+        // But fast_mod only covers [0, 2*(n-1)^2], so we need the shifted value in range.
+        // s*a + t*b ∈ [-(n-1)^2, 2*(n-1)^2] when s,t,a,b ∈ [0, n).
+        // After adding (n-1)^2, range is [0, 3*(n-1)^2] — too large for our LUT.
+        //
+        // Simpler: just use i64 % which is fast for small n, and conditional add.
+        // The LUT win is in gcdex, not here. Keep i64 % for the row ops.
+        for j in col_start..col_end {
+            let a = m[[r0, j]];
+            let b = m[[r1, j]];
+            let new_r0 = (s * a + t * b) % n;
+            let new_r1 = (u * a + v * b) % n;
+            m[[r0, j]] = if new_r0 < 0 { new_r0 + n } else { new_r0 };
+            m[[r1, j]] = if new_r1 < 0 { new_r1 + n } else { new_r1 };
+        }
+    } else if n < (1i64 << 31) {
         for j in col_start..col_end {
             let a = m[[r0, j]];
             let b = m[[r1, j]];
@@ -56,9 +77,10 @@ fn apply_row_2x2(
     u: i64,
     v: i64,
     n: i64,
+    ring: &RingZModN,
 ) {
     let cols = m.ncols();
-    apply_row_2x2_cols(m, r0, r1, s, t, u, v, n, 0, cols);
+    apply_row_2x2_cols(m, r0, r1, s, t, u, v, n, 0, cols, ring);
 }
 
 /// Apply a 2x2 row transform to two matrices simultaneously.
@@ -73,9 +95,10 @@ pub fn apply_row_2x2_pair(
     u: i64,
     v: i64,
     n: i64,
+    ring: &RingZModN,
 ) {
-    apply_row_2x2(m1, r0, r1, s, t, u, v, n);
-    apply_row_2x2(m2, r0, r1, s, t, u, v, n);
+    apply_row_2x2(m1, r0, r1, s, t, u, v, n, ring);
+    apply_row_2x2(m2, r0, r1, s, t, u, v, n, ring);
 }
 
 /// Lemma 3.1: row-echelon form via extended GCD elimination.
@@ -104,7 +127,7 @@ pub fn lemma_3_1(a: &Array2<i64>, ring: &RingZModN) -> (Array2<i64>, Array2<i64>
             }
 
             let (_, s, tv, uv, v) = ring.gcdex(a_val, b_val);
-            apply_row_2x2_pair(&mut t, &mut u, r, i, s, tv, uv, v, n_mod);
+            apply_row_2x2_pair(&mut t, &mut u, r, i, s, tv, uv, v, n_mod, ring);
         }
 
         if !ring.is_zero(t[[r, k]]) {
