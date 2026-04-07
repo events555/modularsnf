@@ -15,8 +15,6 @@ fn posmod(a: i64, n: i64) -> i64 {
 }
 
 /// Apply a 2×2 column transform to columns c0, c1 of a matrix.
-///
-/// For small n (< 2^31), uses i64 arithmetic.
 #[inline]
 fn apply_col_2x2(
     m: &mut Array2<i64>,
@@ -27,9 +25,17 @@ fn apply_col_2x2(
     u: i64,
     v: i64,
     n: i64,
+    ring: &RingZModN,
 ) {
     let rows = m.nrows();
-    if n < (1i64 << 31) {
+    if ring.has_lut() {
+        for row in 0..rows {
+            let a = m[[row, c0]];
+            let b = m[[row, c1]];
+            m[[row, c0]] = ring.fast_mod(s * a + t * b);
+            m[[row, c1]] = ring.fast_mod(u * a + v * b);
+        }
+    } else if n < (1i64 << 31) {
         for row in 0..rows {
             let a = m[[row, c0]];
             let b = m[[row, c1]];
@@ -50,7 +56,7 @@ fn apply_col_2x2(
     }
 }
 
-/// Add phi * col[src] to col[dst] for two matrices.
+/// Add phi * col[src] to col[dst].
 #[inline]
 fn add_col_scaled(
     m: &mut Array2<i64>,
@@ -58,9 +64,14 @@ fn add_col_scaled(
     src: usize,
     phi: i64,
     n: i64,
+    ring: &RingZModN,
 ) {
     let rows = m.nrows();
-    if n < (1i64 << 31) {
+    if ring.has_lut() {
+        for row in 0..rows {
+            m[[row, dst]] = ring.fast_mod(m[[row, dst]] + phi * m[[row, src]]);
+        }
+    } else if n < (1i64 << 31) {
         for row in 0..rows {
             let val = (m[[row, dst]] + phi * m[[row, src]]) % n;
             m[[row, dst]] = if val < 0 { val + n } else { val };
@@ -394,8 +405,8 @@ fn step5_to_8_gcd_chain(
         apply_row_2x2_pair(&mut t, &mut u, i, i + 1, 1, c, 0, 1, n_mod, ring);
 
         // Op 2: add q * col[i] to col[i+1]
-        add_col_scaled(&mut t, i + 1, i, q, n_mod);
-        add_col_scaled(&mut v, i + 1, i, q, n_mod);
+        add_col_scaled(&mut t, i + 1, i, q, n_mod, ring);
+        add_col_scaled(&mut v, i + 1, i, q, n_mod, ring);
     }
 
     // Step 8: gcd reduction loop (ripple down)
@@ -410,8 +421,8 @@ fn step5_to_8_gcd_chain(
         let (_, s, tv, uv, vv) = ring.gcdex(pivot, target);
 
         // Column operations on both t and v
-        apply_col_2x2(&mut t, i, col_target, s, tv, uv, vv, n_mod);
-        apply_col_2x2(&mut v, i, col_target, s, tv, uv, vv, n_mod);
+        apply_col_2x2(&mut t, i, col_target, s, tv, uv, vv, n_mod, ring);
+        apply_col_2x2(&mut v, i, col_target, s, tv, uv, vv, n_mod, ring);
     }
 
     (u, v, t, idx_k + 1)

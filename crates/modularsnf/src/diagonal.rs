@@ -5,7 +5,7 @@
 
 use ndarray::{s, Array2};
 
-use crate::ring::{mul_mod, posmod_i128, RingZModN};
+use crate::ring::{add_mod, mul_mod, posmod_i128, RingZModN};
 
 /// Positive modulo.
 #[inline]
@@ -219,6 +219,178 @@ fn matmul_mod_add(a: &Array2<i64>, b: &Array2<i64>, n: i64) -> Array2<i64> {
     c
 }
 
+/// Merge two scalar SNF entries, returning flat (u, v, s) as [i64; 4] each (row-major 2x2).
+/// Avoids all Array2 heap allocations.
+#[inline]
+fn merge_scalars_flat(a: i64, b: i64, ring: &RingZModN) -> ([i64; 4], [i64; 4], [i64; 4]) {
+    let n = ring.n();
+    let (g, s, t, u, v) = ring.gcdex(a, b);
+
+    if g % n == 0 {
+        return ([1, 0, 0, 1], [1, 0, 0, 1], [0, 0, 0, 0]);
+    }
+
+    let tb = mul_mod(t, b, n);
+    let q_raw = ring.div(tb, g).unwrap_or(0);
+    let q = posmod(-q_raw, n);
+
+    let u_flat = [posmod(s, n), posmod(t, n), posmod(u, n), posmod(v, n)];
+    let q1 = add_mod(1 % n, q, n);
+    let v_flat = [1, q, 1, q1];
+
+    // S = U @ diag(a, b) @ V
+    // U @ diag(a,b) = [u[0]*a, u[1]*b, u[2]*a, u[3]*b]
+    let ua0 = mul_mod(u_flat[0], a, n);
+    let ub1 = mul_mod(u_flat[1], b, n);
+    let ua2 = mul_mod(u_flat[2], a, n);
+    let ub3 = mul_mod(u_flat[3], b, n);
+    // (UD) @ V:
+    let s00 = add_mod(mul_mod(ua0, v_flat[0], n), mul_mod(ub1, v_flat[2], n), n);
+    let s01 = add_mod(mul_mod(ua0, v_flat[1], n), mul_mod(ub1, v_flat[3], n), n);
+    let s10 = add_mod(mul_mod(ua2, v_flat[0], n), mul_mod(ub3, v_flat[2], n), n);
+    let s11 = add_mod(mul_mod(ua2, v_flat[1], n), mul_mod(ub3, v_flat[3], n), n);
+
+    (u_flat, v_flat, [s00, s01, s10, s11])
+}
+
+/// Left-apply a 2x2 scalar-block transform to rows s1, s2 of matrix M.
+/// u is [u00, u01, u10, u11] row-major.
+#[inline]
+fn left_apply_scalar_pair(m: &mut Array2<i64>, u: &[i64; 4], s1: usize, s2: usize, ring: &RingZModN) {
+    let n = ring.n();
+    let cols = m.ncols();
+    if ring.has_lut() {
+        for j in 0..cols {
+            let r1 = m[[s1, j]];
+            let r2 = m[[s2, j]];
+            m[[s1, j]] = ring.fast_mod(u[0] * r1 + u[1] * r2);
+            m[[s2, j]] = ring.fast_mod(u[2] * r1 + u[3] * r2);
+        }
+    } else if n < (1i64 << 31) {
+        for j in 0..cols {
+            let r1 = m[[s1, j]];
+            let r2 = m[[s2, j]];
+            let v0 = (u[0] * r1 + u[1] * r2) % n;
+            let v1 = (u[2] * r1 + u[3] * r2) % n;
+            m[[s1, j]] = if v0 < 0 { v0 + n } else { v0 };
+            m[[s2, j]] = if v1 < 0 { v1 + n } else { v1 };
+        }
+    } else {
+        for j in 0..cols {
+            let r1 = m[[s1, j]];
+            let r2 = m[[s2, j]];
+            m[[s1, j]] = posmod_i128((u[0] as i128) * (r1 as i128) + (u[1] as i128) * (r2 as i128), n);
+            m[[s2, j]] = posmod_i128((u[2] as i128) * (r1 as i128) + (u[3] as i128) * (r2 as i128), n);
+        }
+    }
+}
+
+/// Right-apply a 2x2 scalar-block transform to cols s1, s2 of matrix M.
+/// v is [v00, v01, v10, v11] row-major.
+#[inline]
+fn right_apply_scalar_pair(m: &mut Array2<i64>, v: &[i64; 4], s1: usize, s2: usize, ring: &RingZModN) {
+    let n = ring.n();
+    let rows = m.nrows();
+    if ring.has_lut() {
+        for i in 0..rows {
+            let c1 = m[[i, s1]];
+            let c2 = m[[i, s2]];
+            m[[i, s1]] = ring.fast_mod(c1 * v[0] + c2 * v[2]);
+            m[[i, s2]] = ring.fast_mod(c1 * v[1] + c2 * v[3]);
+        }
+    } else if n < (1i64 << 31) {
+        for i in 0..rows {
+            let c1 = m[[i, s1]];
+            let c2 = m[[i, s2]];
+            let v0 = (c1 * v[0] + c2 * v[2]) % n;
+            let v1 = (c1 * v[1] + c2 * v[3]) % n;
+            m[[i, s1]] = if v0 < 0 { v0 + n } else { v0 };
+            m[[i, s2]] = if v1 < 0 { v1 + n } else { v1 };
+        }
+    } else {
+        for i in 0..rows {
+            let c1 = m[[i, s1]];
+            let c2 = m[[i, s2]];
+            m[[i, s1]] = posmod_i128((c1 as i128) * (v[0] as i128) + (c2 as i128) * (v[2] as i128), n);
+            m[[i, s2]] = posmod_i128((c1 as i128) * (v[1] as i128) + (c2 as i128) * (v[3] as i128), n);
+        }
+    }
+}
+
+/// Specialized merge_raw for n==2: all sub-operations use scalar math.
+/// The 4 diagonal entries are a1=a[0,0], a2=a[1,1], b1=b[0,0], b2=b[1,1].
+/// U_total and V_total are 4x4. All intermediate merges are 2x2 flat arrays.
+fn merge_raw_n2(
+    a_arr: &Array2<i64>,
+    b_arr: &Array2<i64>,
+    ring: &RingZModN,
+) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
+    let n_mod = ring.n();
+
+    let mut a1 = a_arr[[0, 0]];
+    let mut a2 = a_arr[[1, 1]];
+    let mut b1 = b_arr[[0, 0]];
+    let mut b2 = b_arr[[1, 1]];
+
+    let mut u_total = Array2::<i64>::eye(4);
+    let mut v_total = Array2::<i64>::eye(4);
+
+    // index_map = [0, 1, 2, 3] for t=1
+    macro_rules! apply_step_scalar {
+        ($blk1:expr, $blk2:expr, $s1:expr, $s2:expr) => {{
+            if !($blk1 % n_mod == 0 && $blk2 % n_mod == 0) {
+                let (u_flat, v_flat, s_flat) = merge_scalars_flat($blk1, $blk2, ring);
+                $blk1 = s_flat[0]; // top-left of S
+                $blk2 = s_flat[3]; // bottom-right of S
+
+                left_apply_scalar_pair(&mut u_total, &u_flat, $s1, $s2, ring);
+                right_apply_scalar_pair(&mut v_total, &v_flat, $s1, $s2, ring);
+            }
+        }};
+    }
+
+    apply_step_scalar!(a1, b1, 0, 2);
+    apply_step_scalar!(a2, b2, 1, 3);
+    apply_step_scalar!(a2, b1, 1, 2);
+    apply_step_scalar!(b1, b2, 2, 3);
+
+    // Handle b2 != 0 case (rank-based permutation)
+    if b2 % n_mod != 0 {
+        let r_b1: usize = if b1 % n_mod != 0 { 1 } else { 0 };
+        if r_b1 < 1 {
+            let r_b2: usize = if b2 % n_mod != 0 { 1 } else { 0 };
+
+            // For t=1: r_b1=0. If r_b2 > 0, the permutation is a swap of
+            // rows/cols 2,3. Otherwise identity (no-op).
+            if r_b2 > 0 {
+                // Swap rows 2 and 3 of u_total
+                for j in 0..4 {
+                    let tmp = u_total[[2, j]];
+                    u_total[[2, j]] = u_total[[3, j]];
+                    u_total[[3, j]] = tmp;
+                }
+                // Swap cols 2 and 3 of v_total
+                for i in 0..4 {
+                    let tmp = v_total[[i, 2]];
+                    v_total[[i, 2]] = v_total[[i, 3]];
+                    v_total[[i, 3]] = tmp;
+                }
+                // Swap b1 and b2
+                std::mem::swap(&mut b1, &mut b2);
+            }
+        }
+    }
+
+    // Assemble S_final = diag(a1, a2, b1, b2)
+    let mut s_final = Array2::zeros((4, 4));
+    s_final[[0, 0]] = a1;
+    s_final[[1, 1]] = a2;
+    s_final[[2, 2]] = b1;
+    s_final[[3, 3]] = b2;
+
+    (u_total, v_total, s_final)
+}
+
 /// Recursive merge of two SNF blocks. Returns (U, V, S) as 2n x 2n arrays.
 pub fn merge_raw(
     a_arr: &Array2<i64>,
@@ -235,6 +407,10 @@ pub fn merge_raw(
 
     if n == 1 {
         return merge_scalars(a_arr[[0, 0]], b_arr[[0, 0]], ring);
+    }
+
+    if n == 2 {
+        return merge_raw_n2(a_arr, b_arr, ring);
     }
 
     let t = n / 2;
@@ -261,28 +437,37 @@ pub fn merge_raw(
                 let s1 = index_map[$idx1];
                 let s2 = index_map[$idx2];
 
-                left_apply_block_pair(
-                    &mut u_total,
-                    &subblock(&u_loc, 0, t, 0, t),
-                    &subblock(&u_loc, 0, t, t, 2 * t),
-                    &subblock(&u_loc, t, 2 * t, 0, t),
-                    &subblock(&u_loc, t, 2 * t, t, 2 * t),
-                    s1,
-                    s2,
-                    t,
-                    n_mod,
-                );
-                right_apply_block_pair(
-                    &mut v_total,
-                    &subblock(&v_loc, 0, t, 0, t),
-                    &subblock(&v_loc, 0, t, t, 2 * t),
-                    &subblock(&v_loc, t, 2 * t, 0, t),
-                    &subblock(&v_loc, t, 2 * t, t, 2 * t),
-                    s1,
-                    s2,
-                    t,
-                    n_mod,
-                );
+                if t == 1 {
+                    // Scalar-block specialization: u_loc and v_loc are 2x2,
+                    // so avoid subblock extraction and matmul overhead.
+                    let u_flat = [u_loc[[0, 0]], u_loc[[0, 1]], u_loc[[1, 0]], u_loc[[1, 1]]];
+                    let v_flat = [v_loc[[0, 0]], v_loc[[0, 1]], v_loc[[1, 0]], v_loc[[1, 1]]];
+                    left_apply_scalar_pair(&mut u_total, &u_flat, s1, s2, ring);
+                    right_apply_scalar_pair(&mut v_total, &v_flat, s1, s2, ring);
+                } else {
+                    left_apply_block_pair(
+                        &mut u_total,
+                        &subblock(&u_loc, 0, t, 0, t),
+                        &subblock(&u_loc, 0, t, t, 2 * t),
+                        &subblock(&u_loc, t, 2 * t, 0, t),
+                        &subblock(&u_loc, t, 2 * t, t, 2 * t),
+                        s1,
+                        s2,
+                        t,
+                        n_mod,
+                    );
+                    right_apply_block_pair(
+                        &mut v_total,
+                        &subblock(&v_loc, 0, t, 0, t),
+                        &subblock(&v_loc, 0, t, t, 2 * t),
+                        &subblock(&v_loc, t, 2 * t, 0, t),
+                        &subblock(&v_loc, t, 2 * t, t, 2 * t),
+                        s1,
+                        s2,
+                        t,
+                        n_mod,
+                    );
+                }
             }
         }};
     }

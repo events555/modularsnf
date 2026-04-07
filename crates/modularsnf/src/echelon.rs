@@ -28,22 +28,13 @@ fn apply_row_2x2_cols(
     ring: &RingZModN,
 ) {
     if ring.has_lut() {
-        // LUT path: compute s*a + t*b in i64, shift to non-negative, table lookup.
-        // Max negative: -(n-1)^2 (when one term is 0 and the other has opposite signs).
-        // Shift by (n-1)^2 to guarantee non-negative; then fast_mod the shifted result.
-        // But fast_mod only covers [0, 2*(n-1)^2], so we need the shifted value in range.
-        // s*a + t*b ∈ [-(n-1)^2, 2*(n-1)^2] when s,t,a,b ∈ [0, n).
-        // After adding (n-1)^2, range is [0, 3*(n-1)^2] — too large for our LUT.
-        //
-        // Simpler: just use i64 % which is fast for small n, and conditional add.
-        // The LUT win is in gcdex, not here. Keep i64 % for the row ops.
+        // LUT path: s*a + t*b ∈ [-(n-1)², 2*(n-1)²] when s,t,a,b ∈ [0, n).
+        // The mod LUT covers this full range and returns posmod directly.
         for j in col_start..col_end {
             let a = m[[r0, j]];
             let b = m[[r1, j]];
-            let new_r0 = (s * a + t * b) % n;
-            let new_r1 = (u * a + v * b) % n;
-            m[[r0, j]] = if new_r0 < 0 { new_r0 + n } else { new_r0 };
-            m[[r1, j]] = if new_r1 < 0 { new_r1 + n } else { new_r1 };
+            m[[r0, j]] = ring.fast_mod(s * a + t * b);
+            m[[r1, j]] = ring.fast_mod(u * a + v * b);
         }
     } else if n < (1i64 << 31) {
         for j in col_start..col_end {
@@ -172,7 +163,13 @@ pub fn index1_reduce_on_columns(
             let phi = ((-quo) % n_mod + n_mod) % n_mod;
 
             // row[i] += phi * row[j]  (mod n)
-            if n_mod < (1i64 << 31) {
+            if ring.has_lut() {
+                let cols = t.ncols();
+                for c in 0..cols {
+                    t[[i, c]] = ring.fast_mod(t[[i, c]] + phi * t[[j, c]]);
+                    u[[i, c]] = ring.fast_mod(u[[i, c]] + phi * u[[j, c]]);
+                }
+            } else if n_mod < (1i64 << 31) {
                 let cols = t.ncols();
                 for c in 0..cols {
                     let val = (t[[i, c]] + phi * t[[j, c]]) % n_mod;

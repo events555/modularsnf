@@ -94,10 +94,13 @@ struct GcdexEntry {
 struct SmallModLut {
     /// Gcdex LUT: gcdex_lut[a * n + b] = gcdex(a, b) for a, b ∈ [0, n).
     gcdex_lut: Vec<GcdexEntry>,
-    /// Modular reduction LUT: mod_lut[x] = x % n for x ∈ [0, 2*(n-1)²].
-    /// Used for fast reduction of s*a + t*b products.
+    /// Modular reduction LUT covering [-(n-1)², 2*(n-1)²].
+    /// Indexed by (value + offset) where offset = (n-1)².
+    /// mod_lut[value + offset] = posmod(value, n) for the full range.
     mod_lut: Vec<i64>,
-    /// Size of the mod LUT.
+    /// Offset to add to make negative values index correctly.
+    mod_lut_offset: usize,
+    /// Total size of the mod LUT.
     mod_lut_size: usize,
 }
 
@@ -172,21 +175,25 @@ impl RingZModN {
                 }
             }
 
-            // Build mod LUT for fast reduction of products.
-            // For apply_row_2x2: s*a + t*b where s,a,t,b ∈ [0, n).
-            // Max positive value: 2*(n-1)² ≈ 32258 for n=128.
-            // Min negative value: after i64 %, could be -(2*(n-1)²).
-            // We store mod results for [0, 2*(n-1)²].
-            let max_val = 2 * (n - 1) * (n - 1);
-            let mod_lut_size = (max_val + 1) as usize;
+            // Build mod LUT for fast reduction of s*a + t*b products.
+            // Range: [-(n-1)², 2*(n-1)²] where s,t,a,b ∈ [0, n).
+            // We store posmod results for this full range, indexed by
+            // (value + offset) where offset = (n-1)².
+            let nm1_sq = (n - 1) * (n - 1);
+            let min_val = -nm1_sq;        // most negative possible
+            let max_val = 2 * nm1_sq;     // most positive possible
+            let offset = nm1_sq as usize; // shift to make index non-negative
+            let mod_lut_size = (max_val - min_val + 1) as usize;
             let mut mod_lut = Vec::with_capacity(mod_lut_size);
-            for i in 0..mod_lut_size {
-                mod_lut.push((i as i64) % n);
+            for i in min_val..=max_val {
+                let r = i % n;
+                mod_lut.push(if r < 0 { r + n } else { r });
             }
 
             Some(SmallModLut {
                 gcdex_lut,
                 mod_lut,
+                mod_lut_offset: offset,
                 mod_lut_size,
             })
         } else {
@@ -202,16 +209,18 @@ impl RingZModN {
     }
 
     /// Fast modular reduction using LUT when available.
-    /// Input must be non-negative and < mod_lut_size.
+    /// For values in [-(n-1)², 2*(n-1)²], returns posmod(val, n) via table lookup.
+    /// Falls back to i64 % + conditional add for out-of-range values.
     #[inline]
     pub fn fast_mod(&self, val: i64) -> i64 {
         if let Some(ref lut) = self.lut {
-            let v = val as usize;
-            if v < lut.mod_lut_size {
-                return unsafe { *lut.mod_lut.get_unchecked(v) };
+            let idx = val as isize + lut.mod_lut_offset as isize;
+            if idx >= 0 && (idx as usize) < lut.mod_lut_size {
+                return unsafe { *lut.mod_lut.get_unchecked(idx as usize) };
             }
         }
-        val % self.n
+        let r = val % self.n;
+        if r < 0 { r + self.n } else { r }
     }
 
     /// Returns true if this ring has precomputed LUTs.
