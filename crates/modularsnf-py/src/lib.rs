@@ -1,6 +1,7 @@
 use modularsnf::ring::RingZModN;
 use modularsnf::snf::smith_square;
 use modularsnf::diagonal::{merge_raw, smith_from_diagonal};
+use modularsnf::echelon::lemma_3_1;
 
 use numpy::ndarray::{s, Array2};
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
@@ -165,6 +166,24 @@ fn rust_merge_smith_blocks<'py>(
     Ok((u.into_pyarray(py), v.into_pyarray(py), s.into_pyarray(py)))
 }
 
+/// Row echelon form via gcdex elimination (Storjohann's Lemma 3.1).
+/// Returns (U, T, rank) where T = U @ A (mod N) is in row echelon form.
+#[pyfunction]
+fn rust_echelon_form<'py>(
+    py: Python<'py>,
+    data: PyReadonlyArray2<'py, i64>,
+    modulus: i64,
+) -> PyResult<(
+    Bound<'py, PyArray2<i64>>,
+    Bound<'py, PyArray2<i64>>,
+    usize,
+)> {
+    let ring = RingZModN::new(modulus).map_err(PyValueError::new_err)?;
+    let a = data.as_array().to_owned();
+    let (u, t, rank) = lemma_3_1(&a, &ring);
+    Ok((u.into_pyarray(py), t.into_pyarray(py), rank))
+}
+
 /// Native Rust acceleration for modularsnf.
 #[pymodule]
 fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -172,5 +191,6 @@ fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rust_smith_from_diagonal, m)?)?;
     m.add_function(wrap_pyfunction!(rust_merge_smith_blocks, m)?)?;
     m.add_function(wrap_pyfunction!(rust_smith_normal_form, m)?)?;
+    m.add_function(wrap_pyfunction!(rust_echelon_form, m)?)?;
     Ok(())
 }
