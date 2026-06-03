@@ -53,10 +53,39 @@ Strassen-Winograd `kWinograd` bound did not survive verification.)
 - Verify: invariant factors + `U·A·V == S (mod N)` unchanged; measure speedup.
 
 ### Phase 2 — Blocked right-looking LU + modular GEMM (asymptotic win)
-- Restructure `local_snf` into panels; trailing update becomes one matmul
-  `T -= L·U_panel (mod p^e)` (Storjohann reduction-to-matmul).
-- Build the f64/i64-accumulate → reduce-mod-p^e GEMM layer; evaluate `faer`
-  vs ndarray+BLAS vs hand-rolled as the inner kernel.
+
+**2a — two-phase split (DONE).** `local_snf` now does Phase L (minimal-valuation
+column elimination → U, upper-triangular `mat`) + Phase R (reverse-order back-
+elimination → V). Groundwork for blocking; also removed wasted work (old inline
+row-clear touched all n rows of each column). ~1.1–1.3× over Phase 1. Gated by a
+randomized cargo oracle test (`local_snf_is_valid_smith_form`, 500+ cases:
+`U·A·V==diag(p^vals)`, ascending vals, `U,V` unimodular) + head-to-head vs dev.
+
+**2b — blocked GEMM trailing update (NEXT, designed).** Key constraint:
+minimal-valuation pivoting needs the *global* min over the trailing block, which
+defeats naive column-panel/lazy blocking. The blockable formulation is
+**valuation-level staging**: process pivots by p-adic level ℓ = 0..e; within a
+level every pivot is a unit mod p, so it degenerates to standard blocked LU.
+Implementation plan for Phase L:
+- Outer loop: `lev` = current global min valuation in `mat[k.., k..]`; `pl=p^lev`.
+- Panel (width B≈48) of valuation-`lev` pivots. Bookkeeping per standard
+  right-looking blocked LU:
+  - factor panel columns `[pstart,pend)`: full updates to **panel rows** (so the
+    `U12` block `mat[pstart..pend, pend..]` is correct) and to **panel columns**
+    for all rows (so pivot search + the `L21` multipliers `mat[pend.., pstart..pend]`
+    are correct); defer non-panel trailing columns.
+  - **GEMM trailing update**: `mat[pend.., pend..] -= L21 @ U12 (mod p^e)`, and
+    the analogous `u[pend.., :] -= L21 @ u[pstart..pend, :]`.
+  - column-deflation: a panel column with no valuation-`lev` unit → swap out to
+    the active-region tail (track in V), revisit at a higher level.
+- GEMM kernel: i64 accumulate with delayed reduction (small `p^e` ⇒ block
+  `λ·(p−1)² < 2^53` is huge ⇒ reduce rarely); i128 acc fallback for large `p^e`.
+  Later swap inner kernel for `faer` (MIT/Apache) or BLAS dgemm.
+- RISK: exact-LU bookkeeping (L21/U12 split, panel-row vs below-panel updates,
+  deflation) is subtle; keep the scalar 2a `local_snf` as the cargo-test oracle
+  and only switch the default once the blocked version passes the full suite.
+- Apply the same blocking to Phase R's V-update (triangular column reduction →
+  one TRMM/GEMM) once Phase L lands.
 
 ### Phase 3 — Multi-core (rayon)
 - Parallelize the trailing-update GEMM first (real scaling).
