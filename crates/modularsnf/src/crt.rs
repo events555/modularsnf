@@ -79,25 +79,203 @@ fn pval(mut x: i64, p: i64, cap: u32) -> u32 {
     v
 }
 
-/// SNF of `A` over the local ring `Z/p^e` via valuation pivoting.
-///
-/// Returns `(U, V, vals)` with `U @ A @ V == diag(p^vals) (mod p^e)`,
-/// `U` (n x n) and `V` (m x m) unimodular and `vals` ascending.
-fn local_snf(a: &Array2<i64>, p: i64, e: u32) -> (Array2<i64>, Array2<i64>, Vec<u32>) {
-    let q = p.pow(e);
-    let n = a.nrows();
-    let m = a.ncols();
-    let r = n.min(m);
+/// Block width for the right-looking blocked LU (Phase L, unit stage).
+const PANEL_B: usize = 48;
+/// i64 GEMM accumulator is safe while `PANEL_B * (q-1)^2 < 2^63`. q < 2^28
+/// gives 48 * 2^56 < 2^62, so use i64 below it and i128 at/above it.
+const GEMM_I64_MAX: i64 = 1i64 << 28;
 
-    let mut mat = a.mapv(|x| pmod(x, q));
-    let mut u = Array2::<i64>::eye(n);
-    let mut v = Array2::<i64>::eye(m);
+/// Minimal p-adic valuation over `mat[k.., k..]` (returns `e+1` if all zero).
+fn min_valuation(mat: &Array2<i64>, k: usize, n: usize, m: usize, p: i64, e: u32) -> u32 {
+    let mut lev = e + 1;
+    for i in k..n {
+        for j in k..m {
+            let val = mat[[i, j]];
+            if val != 0 {
+                let vv = pval(val, p, e);
+                if vv < lev {
+                    if vv == 0 {
+                        return 0;
+                    }
+                    lev = vv;
+                }
+            }
+        }
+    }
+    lev
+}
 
-    // ---- Phase L: column elimination -> U, mat becomes upper-triangular ----
-    // Minimal-valuation pivoting (which sorts the diagonal by valuation, giving
-    // the divisibility chain). Row clears are deferred to Phase R; deferring is
-    // valid because column clears alone produce the upper-triangular Schur form.
-    for k in 0..r {
+/// Apply a deferred panel update to `target` over columns `[c0, c1)`:
+/// first TRSM the panel rows `[k, k+pb)` by the unit-lower-triangular `L11`,
+/// then GEMM the trailing rows `[k+pb, n)` as `-= L21 @ panel (mod q)`.
+/// `l11[t*pb + s]` (s < t) and `l21[i*pb + s]` are the stored multipliers.
+fn apply_block_update(
+    target: &mut Array2<i64>,
+    l11: &[i64],
+    l21: &[i64],
+    k: usize,
+    pb: usize,
+    c0: usize,
+    c1: usize,
+    q: i64,
+) {
+    if c1 <= c0 {
+        return;
+    }
+    let n = target.nrows();
+    let pend = k + pb;
+    // TRSM: forward substitution against unit-lower-triangular L11.
+    for t in 1..pb {
+        for s in 0..t {
+            let f = l11[t * pb + s];
+            if f != 0 {
+                for col in c0..c1 {
+                    target[[k + t, col]] =
+                        sub_mul_mod(target[[k + t, col]], f, target[[k + s, col]], q);
+                }
+            }
+        }
+    }
+    // GEMM trailing update with delayed reduction.
+    let trail = n - pend;
+    if q < GEMM_I64_MAX {
+        for i in 0..trail {
+            let row = pend + i;
+            for col in c0..c1 {
+                let mut acc = target[[row, col]];
+                for s in 0..pb {
+                    acc -= l21[i * pb + s] * target[[k + s, col]];
+                }
+                let rr = acc % q;
+                target[[row, col]] = if rr < 0 { rr + q } else { rr };
+            }
+        }
+    } else {
+        for i in 0..trail {
+            let row = pend + i;
+            for col in c0..c1 {
+                let mut acc = target[[row, col]] as i128;
+                for s in 0..pb {
+                    acc -= l21[i * pb + s] as i128 * target[[k + s, col]] as i128;
+                }
+                target[[row, col]] = posmod_i128(acc, q);
+            }
+        }
+    }
+}
+
+/// Blocked right-looking LU over the unit (valuation-0) part of `mat`.
+/// Eliminates leading columns whose pivot is a unit (mod p), updating `mat`
+/// and `u`; returns the first pivot index it could not place (a column with no
+/// unit), which the scalar path then finishes. `v` is untouched (no column
+/// swaps here). Pre-condition: `min_valuation(mat, 0, ..) == 0`.
+fn phase_l_blocked_unit(
+    mat: &mut Array2<i64>,
+    u: &mut Array2<i64>,
+    p: i64,
+    e: u32,
+    q: i64,
+    n: usize,
+    m: usize,
+    r: usize,
+) -> usize {
+    let mut k = 0;
+    while k < r {
+        let pend_max = (k + PANEL_B).min(r);
+
+        // ---- factor the panel columns [k, pend_max): unit row-pivoting ----
+        let mut kk = k;
+        while kk < pend_max {
+            // find a unit (valuation 0) in column kk, rows [kk, n)
+            let mut prow = None;
+            for i in kk..n {
+                if mat[[i, kk]] != 0 && pval(mat[[i, kk]], p, e) == 0 {
+                    prow = Some(i);
+                    break;
+                }
+            }
+            let pr = match prow {
+                Some(x) => x,
+                None => break, // column kk has no unit -> end panel (then scalar)
+            };
+            if pr != kk {
+                // full-width row swap keeps the deferred block + u consistent
+                for col in 0..m {
+                    mat.swap([kk, col], [pr, col]);
+                }
+                for col in 0..n {
+                    u.swap([kk, col], [pr, col]);
+                }
+            }
+            // Divide-by-pivot multipliers (the pivot is a unit). The pivot row
+            // is NOT normalized here; the diagonal is normalized once at the end
+            // so that mat and u undergo identical row operations — u's elimination
+            // is deferred (TRSM/GEMM via the stored L), and a normalize-then-
+            // eliminate / eliminate-then-normalize mismatch would corrupt it.
+            let uinv = inv_mod(mat[[kk, kk]], q);
+            for i in (kk + 1)..n {
+                if mat[[i, kk]] != 0 {
+                    let c = mulmod(mat[[i, kk]], uinv, q); // = mat[i,kk] / mat[kk,kk]
+                    for col in (kk + 1)..pend_max {
+                        mat[[i, col]] = sub_mul_mod(mat[[i, col]], c, mat[[kk, col]], q);
+                    }
+                    mat[[i, kk]] = c; // store the multiplier (L)
+                }
+            }
+            kk += 1;
+        }
+        let pend = kk;
+        if pend == k {
+            return k; // no unit in column k -> hand the rest to the scalar path
+        }
+        let pb = pend - k;
+
+        // ---- extract L11 (unit lower-tri) and L21 (trailing-row) multipliers ----
+        let trail = n - pend;
+        let mut l11 = vec![0i64; pb * pb];
+        for t in 0..pb {
+            for s in 0..t {
+                l11[t * pb + s] = mat[[k + t, k + s]];
+            }
+        }
+        let mut l21 = vec![0i64; trail * pb];
+        for i in 0..trail {
+            for s in 0..pb {
+                l21[i * pb + s] = mat[[pend + i, k + s]];
+            }
+        }
+
+        // ---- deferred TRSM + GEMM on mat (cols [pend_max, m)) and u (all cols) ----
+        apply_block_update(mat, &l11, &l21, k, pb, pend_max, m, q);
+        apply_block_update(u, &l11, &l21, k, pb, 0, n, q);
+
+        // ---- zero the L storage below the diagonal of the pivot columns ----
+        for t in 0..pb {
+            for i in (k + t + 1)..n {
+                mat[[i, k + t]] = 0;
+            }
+        }
+        k = pend;
+    }
+    k
+}
+
+/// Scalar Phase L (minimal-valuation column elimination), continuing from
+/// `k_start`. Fully general: global min-valuation pivot + row/column swaps.
+/// Produces `u` (and column swaps tracked in `v`); leaves `mat` upper-triangular.
+fn phase_l_scalar(
+    mat: &mut Array2<i64>,
+    u: &mut Array2<i64>,
+    v: &mut Array2<i64>,
+    p: i64,
+    e: u32,
+    q: i64,
+    n: usize,
+    m: usize,
+    r: usize,
+    k_start: usize,
+) {
+    for k in k_start..r {
         // Find the pivot in mat[k.., k..] with minimal p-adic valuation.
         let mut best: Option<(usize, usize)> = None;
         let mut bestval = e + 1;
@@ -138,11 +316,10 @@ fn local_snf(a: &Array2<i64>, p: i64, e: u32) -> (Array2<i64>, Array2<i64>, Vec<
             }
         }
 
-        let vv = bestval;
-        let pv = p.pow(vv);
+        let pv = p.pow(bestval);
 
         // Normalize the pivot to exactly p^vv by scaling row k by a unit.
-        let unit = mat[[k, k]] / pv; // exact: pivot = p^vv * unit
+        let unit = mat[[k, k]] / pv;
         let uinv = inv_mod(unit, q);
         for col in 0..m {
             mat[[k, col]] = mulmod(mat[[k, col]], uinv, q);
@@ -155,7 +332,7 @@ fn local_snf(a: &Array2<i64>, p: i64, e: u32) -> (Array2<i64>, Array2<i64>, Vec<
         for i in (k + 1)..n {
             let val = mat[[i, k]];
             if val != 0 {
-                let c = val / pv; // exact: val(mat[i,k]) >= vv
+                let c = val / pv;
                 for col in (k + 1)..m {
                     mat[[i, col]] = sub_mul_mod(mat[[i, col]], c, mat[[k, col]], q);
                 }
@@ -166,8 +343,52 @@ fn local_snf(a: &Array2<i64>, p: i64, e: u32) -> (Array2<i64>, Array2<i64>, Vec<
             }
         }
     }
+}
+
+/// SNF of `A` over the local ring `Z/p^e` via valuation pivoting.
+///
+/// Returns `(U, V, vals)` with `U @ A @ V == diag(p^vals) (mod p^e)`,
+/// `U` (n x n) and `V` (m x m) unimodular and `vals` ascending.
+fn local_snf(a: &Array2<i64>, p: i64, e: u32) -> (Array2<i64>, Array2<i64>, Vec<u32>) {
+    let q = p.pow(e);
+    let n = a.nrows();
+    let m = a.ncols();
+    let r = n.min(m);
+
+    let mut mat = a.mapv(|x| pmod(x, q));
+    let mut u = Array2::<i64>::eye(n);
+    let mut v = Array2::<i64>::eye(m);
+
+    // ---- Phase L: column elimination -> U, mat becomes upper-triangular ----
+    // Blocked LU clears the valuation-0 bulk (trailing update = GEMM); the
+    // scalar path finishes the higher-valuation / column-swap tail.
+    let k0 = if min_valuation(&mat, 0, n, m, p, e) == 0 {
+        phase_l_blocked_unit(&mut mat, &mut u, p, e, q, n, m, r)
+    } else {
+        0
+    };
+    phase_l_scalar(&mut mat, &mut u, &mut v, p, e, q, n, m, r, k0);
 
     let vals: Vec<u32> = (0..r).map(|i| pval(mat[[i, i]], p, e)).collect();
+
+    // Normalize each pivot diagonal to exactly p^vals[k]: blocked pivots were
+    // left as units; scalar pivots are already p^vals so this no-ops for them.
+    for k in 0..r {
+        if mat[[k, k]] == 0 {
+            continue; // zero invariant factor (p^e ≡ 0)
+        }
+        let pvk = p.pow(vals[k]);
+        if mat[[k, k]] != pvk {
+            let unit = mat[[k, k]] / pvk; // exact: pivot = p^vals * unit
+            let sc = inv_mod(unit, q);
+            for col in 0..m {
+                mat[[k, col]] = mulmod(mat[[k, col]], sc, q);
+            }
+            for col in 0..n {
+                u[[k, col]] = mulmod(u[[k, col]], sc, q);
+            }
+        }
+    }
 
     // ---- Phase R: diagonalize the upper-triangular mat -> V ----
     // Clear super-diagonal entries by column operations, processing pivots from
@@ -395,39 +616,83 @@ mod tests {
                 for m in [1usize, 3, 5, 9, 16] {
                     for _trial in 0..6 {
                         let a = Array2::from_shape_fn((n, m), |_| rng.below(q));
-                        let (uu, vv, vals) = local_snf(&a, p, e);
-
-                        // U @ A @ V == diag(p^vals) (mod q)
-                        let prod = matmul_mod(&matmul_mod(&uu, &a, q), &vv, q);
-                        let r = n.min(m);
-                        for i in 0..n {
-                            for j in 0..m {
-                                let expect = if i == j && i < r {
-                                    pmod(p.pow(vals[i]), q)
-                                } else {
-                                    0
-                                };
-                                assert_eq!(
-                                    prod[[i, j]], expect,
-                                    "U*A*V mismatch at ({i},{j}) p={p} e={e} n={n} m={m}"
-                                );
-                            }
-                        }
-                        // valuations ascending (divisibility chain)
-                        for i in 1..r {
-                            assert!(
-                                vals[i - 1] <= vals[i],
-                                "vals not ascending: {vals:?} p={p} e={e}"
-                            );
-                        }
-                        // U (n x n) and V (m x m) unimodular
-                        assert!(invertible_mod_p(&uu, p), "U not unimodular p={p} e={e}");
-                        assert!(invertible_mod_p(&vv, p), "V not unimodular p={p} e={e}");
+                        assert_valid_snf(&a, p, e);
                         checked += 1;
                     }
                 }
             }
         }
         assert!(checked > 500, "expected many cases, got {checked}");
+    }
+
+    /// Assert local_snf(a, p, e) is a valid Smith form: U@A@V == diag(p^vals),
+    /// ascending valuations, U,V unimodular.
+    fn assert_valid_snf(a: &Array2<i64>, p: i64, e: u32) {
+        let q = p.pow(e);
+        let (n, m) = (a.nrows(), a.ncols());
+        let r = n.min(m);
+        let (uu, vv, vals) = local_snf(a, p, e);
+        let prod = matmul_mod(&matmul_mod(&uu, a, q), &vv, q);
+        for i in 0..n {
+            for j in 0..m {
+                let expect = if i == j && i < r { pmod(p.pow(vals[i]), q) } else { 0 };
+                assert_eq!(prod[[i, j]], expect, "U*A*V at ({i},{j}) p={p} e={e} n={n} m={m}");
+            }
+        }
+        for i in 1..r {
+            assert!(vals[i - 1] <= vals[i], "vals not ascending {vals:?} p={p} e={e}");
+        }
+        assert!(invertible_mod_p(&uu, p), "U not unimodular p={p} e={e} n={n} m={m}");
+        assert!(invertible_mod_p(&vv, p), "V not unimodular p={p} e={e} n={n} m={m}");
+    }
+
+    /// Exercise the blocked-LU paths: large n (multi-panel), rank-deficiency
+    /// mod p (forces the blocked -> scalar handoff), and p|A (blocked skipped).
+    #[test]
+    fn local_snf_blocked_paths() {
+        let cases = [(2u32, 1u32), (2, 4), (3, 2), (3, 3), (5, 2), (7, 2)];
+        let mut rng = Lcg(0xdead_beef_0bad_f00d);
+        let mut checked = 0;
+        for &(p, e) in &cases {
+            let p = p as i64;
+            let q = p.pow(e);
+            // Larger square sizes spanning the panel width (PANEL_B = 48).
+            for &n in &[40usize, 49, 64, 97] {
+                // (1) dense random: generically full-rank mod p (single long blocked run)
+                let a = Array2::from_shape_fn((n, n), |_| rng.below(q));
+                assert_valid_snf(&a, p, e);
+                checked += 1;
+
+                // (2) low rank mod p: A = B @ C with inner dim rk << n, so the
+                //     blocked unit pass exhausts units early and hands to scalar.
+                for &rk in &[1usize, 3, 7] {
+                    let b = Array2::from_shape_fn((n, rk), |_| rng.below(q));
+                    let c = Array2::from_shape_fn((rk, n), |_| rng.below(q));
+                    let a = matmul_mod(&b, &c, q);
+                    assert_valid_snf(&a, p, e);
+                    checked += 1;
+                }
+
+                // (3) p | A everywhere: min valuation >= 1, blocked pass skipped.
+                let a = Array2::from_shape_fn((n, n), |_| (rng.below(q / p.max(1)) * p) % q);
+                assert_valid_snf(&a, p, e);
+                checked += 1;
+
+                // (4) mixed: a unit block plus a p-scaled block (multi-level).
+                let a = Array2::from_shape_fn((n, n), |(i, j)| {
+                    if (i + j) % 3 == 0 { rng.below(q) } else { (rng.below(q) * p) % q }
+                });
+                assert_valid_snf(&a, p, e);
+                checked += 1;
+
+                // (5) rectangular, both orientations.
+                let a = Array2::from_shape_fn((n, n / 2 + 1), |_| rng.below(q));
+                assert_valid_snf(&a, p, e);
+                let a = Array2::from_shape_fn((n / 2 + 1, n), |_| rng.below(q));
+                assert_valid_snf(&a, p, e);
+                checked += 2;
+            }
+        }
+        assert!(checked > 100, "expected many cases, got {checked}");
     }
 }
