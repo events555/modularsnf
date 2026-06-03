@@ -61,7 +61,20 @@ row-clear touched all n rows of each column). ~1.1–1.3× over Phase 1. Gated b
 randomized cargo oracle test (`local_snf_is_valid_smith_form`, 500+ cases:
 `U·A·V==diag(p^vals)`, ascending vals, `U,V` unimodular) + head-to-head vs dev.
 
-**2b — blocked GEMM trailing update (NEXT, designed).** Key constraint:
+**2b — blocked GEMM trailing update (DONE).** Implemented as right-looking
+blocked LU over the valuation-0 bulk (panel B=48): in-place panel factorization,
+TRSM for the deferred panel rows, GEMM trailing update (i64 accumulate + delayed
+reduction) on `mat` and `u`; scalar min-valuation path finishes the higher-
+valuation/rank-deficient tail; final diagonal normalization. ~1.3–1.5× over 2a
+at n=400, 1.6–2.6× over Phase 1 at n=1000–2000 (cumulative ~3× over original
+CRT). Gated by two cargo tests (600+ cases incl. multi-panel, rank-deficiency
+mod p, p|A, rectangular) + head-to-head vs dev.
+NOTE: the GEMM is a naive i64 triple loop — itself not cache-tiled, which is why
+n=2000 only reaches 1.58×. Swapping it for a tiled / `faer` / BLAS kernel is the
+next lever (Phase 2c) before rayon.
+
+Original design notes (for reference):
+Key constraint:
 minimal-valuation pivoting needs the *global* min over the trailing block, which
 defeats naive column-panel/lazy blocking. The blockable formulation is
 **valuation-level staging**: process pivots by p-adic level ℓ = 0..e; within a
