@@ -69,9 +69,16 @@ valuation/rank-deficient tail; final diagonal normalization. ~1.3–1.5× over 2
 at n=400, 1.6–2.6× over Phase 1 at n=1000–2000 (cumulative ~3× over original
 CRT). Gated by two cargo tests (600+ cases incl. multi-panel, rank-deficiency
 mod p, p|A, rectangular) + head-to-head vs dev.
-NOTE: the GEMM is a naive i64 triple loop — itself not cache-tiled, which is why
-n=2000 only reaches 1.58×. Swapping it for a tiled / `faer` / BLAS kernel is the
-next lever (Phase 2c) before rayon.
+**2c — packed cache-friendly GEMM micro-kernel (DONE).** The 2b GEMM read panel
+rows with stride-m across the contraction index (~pb cache lines per output).
+Fix: pack U12 into a contiguous (pb×ncols) buffer, then contiguous-axpy each
+trailing row (autovectorizes); i128 fallback for large q. ~1.10–1.34× over 2b
+across single- and multi-prime moduli. (An f64 ndarray/matrixmultiply GEMM was
+tried first but regressed multi-prime — n*n product allocation + thin K=48 — so
+the packed i64 kernel was kept.) Cumulative ~3.5–4× over original CRT.
+NEXT: a true tiled/register-blocked or BLAS/faer kernel could push large-n
+further (n=2000 still ~1.1× since the micro-kernel isn't register-tiled), but
+diminishing returns vs Phase 3 (rayon).
 
 Original design notes (for reference):
 Key constraint:
