@@ -15,9 +15,30 @@ fn pmod(a: i64, n: i64) -> i64 {
     posmod_i128(a as i128, n)
 }
 
+/// Threshold below which q^2 (and a - b*c with a,b,c in [0,q)) fits in i64,
+/// so the hot loops avoid i128. q < 2^31 => q^2 < 2^62, comfortably in range.
+const I64_FAST_MAX: i64 = 1i64 << 31;
+
 #[inline]
 fn mulmod(a: i64, b: i64, n: i64) -> i64 {
-    posmod_i128(a as i128 * b as i128, n)
+    if n < I64_FAST_MAX {
+        let r = (a * b) % n;
+        if r < 0 { r + n } else { r }
+    } else {
+        posmod_i128(a as i128 * b as i128, n)
+    }
+}
+
+/// Reduce `a - b*c` into [0, q). Inputs `a, b, c` are in [0, q).
+/// i64 fast path when q < 2^31; widens to i128 for larger prime-power moduli.
+#[inline]
+fn sub_mul_mod(a: i64, b: i64, c: i64, q: i64) -> i64 {
+    if q < I64_FAST_MAX {
+        let r = (a - b * c) % q;
+        if r < 0 { r + q } else { r }
+    } else {
+        posmod_i128(a as i128 - b as i128 * c as i128, q)
+    }
 }
 
 fn egcd_i128(a: i128, b: i128) -> (i128, i128, i128) {
@@ -132,16 +153,10 @@ fn local_snf(a: &Array2<i64>, p: i64, e: u32) -> (Array2<i64>, Array2<i64>, Vec<
             if val != 0 {
                 let c = val / pv; // exact: val(mat[i,k]) >= vv
                 for col in 0..m {
-                    mat[[i, col]] = posmod_i128(
-                        mat[[i, col]] as i128 - c as i128 * mat[[k, col]] as i128,
-                        q,
-                    );
+                    mat[[i, col]] = sub_mul_mod(mat[[i, col]], c, mat[[k, col]], q);
                 }
                 for col in 0..n {
-                    u[[i, col]] = posmod_i128(
-                        u[[i, col]] as i128 - c as i128 * u[[k, col]] as i128,
-                        q,
-                    );
+                    u[[i, col]] = sub_mul_mod(u[[i, col]], c, u[[k, col]], q);
                 }
             }
         }
@@ -152,16 +167,10 @@ fn local_snf(a: &Array2<i64>, p: i64, e: u32) -> (Array2<i64>, Array2<i64>, Vec<
             if val != 0 {
                 let c = val / pv;
                 for row in 0..n {
-                    mat[[row, j]] = posmod_i128(
-                        mat[[row, j]] as i128 - c as i128 * mat[[row, k]] as i128,
-                        q,
-                    );
+                    mat[[row, j]] = sub_mul_mod(mat[[row, j]], c, mat[[row, k]], q);
                 }
                 for row in 0..m {
-                    v[[row, j]] = posmod_i128(
-                        v[[row, j]] as i128 - c as i128 * v[[row, k]] as i128,
-                        q,
-                    );
+                    v[[row, j]] = sub_mul_mod(v[[row, j]], c, v[[row, k]], q);
                 }
             }
         }
@@ -206,8 +215,13 @@ pub fn crt_snf(
 
     let qs: Vec<i64> = factors.iter().map(|&(p, e)| p.pow(e)).collect();
 
+    // Phase 0 profiling: set CRT_PROFILE=1 to print a phase-time breakdown.
+    let prof = std::env::var("CRT_PROFILE").is_ok();
+    let t_local = std::time::Instant::now();
+
     let mut locals: Vec<(Array2<i64>, Array2<i64>, Vec<u32>)> =
         factors.iter().map(|&(p, e)| local_snf(a, p, e)).collect();
+    let d_local = t_local.elapsed();
 
     // Global invariant factors d_i = prod_p p^{vals_p[i]} (divides N).
     let mut d = vec![0i64; r];
@@ -220,6 +234,7 @@ pub fn crt_snf(
     }
 
     // Unit-normalize each prime's V so all primes realize the same d_i.
+    let t_norm = std::time::Instant::now();
     for pi in 0..np {
         let q = qs[pi];
         for i in 0..r {
@@ -237,7 +252,10 @@ pub fn crt_snf(
         }
     }
 
+    let d_norm = t_norm.elapsed();
+
     // CRT-recombine U (n x n) and V (m x m) entrywise across primes.
+    let t_recomb = std::time::Instant::now();
     let mut u = Array2::<i64>::zeros((n, n));
     let mut resid = vec![0i64; np];
     for ar in 0..n {
@@ -258,9 +276,27 @@ pub fn crt_snf(
         }
     }
 
+    let d_recomb = t_recomb.elapsed();
+
     let mut s = Array2::<i64>::zeros((n, m));
     for (i, &di) in d.iter().enumerate() {
         s[[i, i]] = di;
+    }
+
+    if prof {
+        let total = d_local + d_norm + d_recomb;
+        eprintln!(
+            "[CRT_PROFILE] n={n} m={m} N={modulus} np={np} | \
+             local_snf={:.3}ms ({:.0}%) normalize={:.3}ms ({:.0}%) \
+             recombine={:.3}ms ({:.0}%) | total={:.3}ms",
+            d_local.as_secs_f64() * 1e3,
+            100.0 * d_local.as_secs_f64() / total.as_secs_f64(),
+            d_norm.as_secs_f64() * 1e3,
+            100.0 * d_norm.as_secs_f64() / total.as_secs_f64(),
+            d_recomb.as_secs_f64() * 1e3,
+            100.0 * d_recomb.as_secs_f64() / total.as_secs_f64(),
+            total.as_secs_f64() * 1e3,
+        );
     }
 
     (u, v, s)
