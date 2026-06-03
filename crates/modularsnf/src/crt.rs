@@ -93,6 +93,10 @@ fn local_snf(a: &Array2<i64>, p: i64, e: u32) -> (Array2<i64>, Array2<i64>, Vec<
     let mut u = Array2::<i64>::eye(n);
     let mut v = Array2::<i64>::eye(m);
 
+    // ---- Phase L: column elimination -> U, mat becomes upper-triangular ----
+    // Minimal-valuation pivoting (which sorts the diagonal by valuation, giving
+    // the divisibility chain). Row clears are deferred to Phase R; deferring is
+    // valid because column clears alone produce the upper-triangular Schur form.
     for k in 0..r {
         // Find the pivot in mat[k.., k..] with minimal p-adic valuation.
         let mut best: Option<(usize, usize)> = None;
@@ -147,26 +151,36 @@ fn local_snf(a: &Array2<i64>, p: i64, e: u32) -> (Array2<i64>, Array2<i64>, Vec<
             u[[k, col]] = mulmod(u[[k, col]], uinv, q);
         }
 
-        // Clear column k below the pivot.
+        // Clear column k below the pivot (Schur update of the trailing block).
         for i in (k + 1)..n {
             let val = mat[[i, k]];
             if val != 0 {
                 let c = val / pv; // exact: val(mat[i,k]) >= vv
-                for col in 0..m {
+                for col in (k + 1)..m {
                     mat[[i, col]] = sub_mul_mod(mat[[i, col]], c, mat[[k, col]], q);
                 }
+                mat[[i, k]] = 0;
                 for col in 0..n {
                     u[[i, col]] = sub_mul_mod(u[[i, col]], c, u[[k, col]], q);
                 }
             }
         }
+    }
 
-        // Clear row k to the right of the pivot.
+    let vals: Vec<u32> = (0..r).map(|i| pval(mat[[i, i]], p, e)).collect();
+
+    // ---- Phase R: diagonalize the upper-triangular mat -> V ----
+    // Clear super-diagonal entries by column operations, processing pivots from
+    // last to first so that fill created above row k lands in not-yet-processed
+    // rows (and is cleared when those pivots are reached). col k of the upper-
+    // triangular mat is nonzero only in rows 0..=k.
+    for k in (0..r).rev() {
+        let pv = p.pow(vals[k]);
         for j in (k + 1)..m {
             let val = mat[[k, j]];
             if val != 0 {
-                let c = val / pv;
-                for row in 0..n {
+                let c = val / pv; // exact: mat[k,j] divisible by pv
+                for row in 0..=k {
                     mat[[row, j]] = sub_mul_mod(mat[[row, j]], c, mat[[row, k]], q);
                 }
                 for row in 0..m {
@@ -176,7 +190,6 @@ fn local_snf(a: &Array2<i64>, p: i64, e: u32) -> (Array2<i64>, Array2<i64>, Vec<
         }
     }
 
-    let vals: Vec<u32> = (0..r).map(|i| pval(mat[[i, i]], p, e)).collect();
     (u, v, vals)
 }
 
@@ -300,4 +313,121 @@ pub fn crt_snf(
     }
 
     (u, v, s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::Array2;
+
+    /// Deterministic LCG so tests need no external rng dependency.
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 >> 16
+        }
+        fn below(&mut self, n: i64) -> i64 {
+            (self.next() % n as u64) as i64
+        }
+    }
+
+    fn matmul_mod(a: &Array2<i64>, b: &Array2<i64>, q: i64) -> Array2<i64> {
+        let (n, k) = (a.nrows(), a.ncols());
+        let m = b.ncols();
+        let mut c = Array2::<i64>::zeros((n, m));
+        for i in 0..n {
+            for j in 0..m {
+                let mut acc: i128 = 0;
+                for t in 0..k {
+                    acc += a[[i, t]] as i128 * b[[t, j]] as i128;
+                }
+                c[[i, j]] = posmod_i128(acc, q);
+            }
+        }
+        c
+    }
+
+    /// True iff det(M mod p) != 0 over the field F_p (=> M unimodular mod p^e).
+    fn invertible_mod_p(mm: &Array2<i64>, p: i64) -> bool {
+        let n = mm.nrows();
+        let mut a = mm.mapv(|x| pmod(x, p));
+        for k in 0..n {
+            // find a nonzero pivot in column k at/below row k
+            let mut piv = None;
+            for i in k..n {
+                if a[[i, k]] != 0 {
+                    piv = Some(i);
+                    break;
+                }
+            }
+            let pr = match piv {
+                Some(x) => x,
+                None => return false, // singular mod p
+            };
+            if pr != k {
+                for col in 0..n {
+                    a.swap([k, col], [pr, col]);
+                }
+            }
+            let inv = inv_mod(a[[k, k]], p);
+            for i in (k + 1)..n {
+                if a[[i, k]] != 0 {
+                    let f = pmod(a[[i, k]] * inv, p);
+                    for col in k..n {
+                        a[[i, col]] = pmod(a[[i, col]] - f * a[[k, col]], p);
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    #[test]
+    fn local_snf_is_valid_smith_form() {
+        let cases = [(2u32, 1u32), (2, 3), (3, 2), (5, 1), (5, 2), (7, 3)];
+        let mut rng = Lcg(0x1234_5678_9abc_def0);
+        let mut checked = 0;
+        for &(p, e) in &cases {
+            let p = p as i64;
+            let q = p.pow(e);
+            for n in [1usize, 2, 5, 9, 16, 23] {
+                for m in [1usize, 3, 5, 9, 16] {
+                    for _trial in 0..6 {
+                        let a = Array2::from_shape_fn((n, m), |_| rng.below(q));
+                        let (uu, vv, vals) = local_snf(&a, p, e);
+
+                        // U @ A @ V == diag(p^vals) (mod q)
+                        let prod = matmul_mod(&matmul_mod(&uu, &a, q), &vv, q);
+                        let r = n.min(m);
+                        for i in 0..n {
+                            for j in 0..m {
+                                let expect = if i == j && i < r {
+                                    pmod(p.pow(vals[i]), q)
+                                } else {
+                                    0
+                                };
+                                assert_eq!(
+                                    prod[[i, j]], expect,
+                                    "U*A*V mismatch at ({i},{j}) p={p} e={e} n={n} m={m}"
+                                );
+                            }
+                        }
+                        // valuations ascending (divisibility chain)
+                        for i in 1..r {
+                            assert!(
+                                vals[i - 1] <= vals[i],
+                                "vals not ascending: {vals:?} p={p} e={e}"
+                            );
+                        }
+                        // U (n x n) and V (m x m) unimodular
+                        assert!(invertible_mod_p(&uu, p), "U not unimodular p={p} e={e}");
+                        assert!(invertible_mod_p(&vv, p), "V not unimodular p={p} e={e}");
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 500, "expected many cases, got {checked}");
+    }
 }
