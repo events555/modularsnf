@@ -81,8 +81,8 @@ fn pval(mut x: i64, p: i64, cap: u32) -> u32 {
 
 /// Block width for the right-looking blocked LU (Phase L, unit stage).
 const PANEL_B: usize = 48;
-/// i64 GEMM accumulator is safe while `PANEL_B * (q-1)^2 < 2^63`. q < 2^28
-/// gives 48 * 2^56 < 2^62, so use i64 below it and i128 at/above it.
+/// The i64 GEMM accumulator is safe while `PANEL_B * (q-1)^2 < 2^63`. q < 2^28
+/// gives 48 * 2^56 < 2^62, so use the i64 micro-kernel below it, i128 above.
 const GEMM_I64_MAX: i64 = 1i64 << 28;
 
 /// Minimal p-adic valuation over `mat[k.., k..]` (returns `e+1` if all zero).
@@ -136,29 +136,60 @@ fn apply_block_update(
             }
         }
     }
-    // GEMM trailing update with delayed reduction.
+    // GEMM trailing update: trailing rows -= L21 @ U12 (mod q).
+    // Pack U12 (post-TRSM panel rows) into a contiguous (pb x ncols) buffer so
+    // the inner axpy streams contiguously instead of striding by row length.
     let trail = n - pend;
+    if trail == 0 {
+        return;
+    }
+    let ncols = c1 - c0;
+    let mut rpack = vec![0i64; pb * ncols];
+    for s in 0..pb {
+        let base = s * ncols;
+        for j in 0..ncols {
+            rpack[base + j] = target[[k + s, c0 + j]];
+        }
+    }
     if q < GEMM_I64_MAX {
+        let mut acc = vec![0i64; ncols];
         for i in 0..trail {
             let row = pend + i;
-            for col in c0..c1 {
-                let mut acc = target[[row, col]];
-                for s in 0..pb {
-                    acc -= l21[i * pb + s] * target[[k + s, col]];
+            for j in 0..ncols {
+                acc[j] = target[[row, c0 + j]];
+            }
+            for s in 0..pb {
+                let l = l21[i * pb + s];
+                if l != 0 {
+                    let base = s * ncols;
+                    for j in 0..ncols {
+                        acc[j] -= l * rpack[base + j]; // contiguous, autovectorizes
+                    }
                 }
-                let rr = acc % q;
-                target[[row, col]] = if rr < 0 { rr + q } else { rr };
+            }
+            for j in 0..ncols {
+                let rr = acc[j] % q;
+                target[[row, c0 + j]] = if rr < 0 { rr + q } else { rr };
             }
         }
     } else {
+        let mut acc = vec![0i128; ncols];
         for i in 0..trail {
             let row = pend + i;
-            for col in c0..c1 {
-                let mut acc = target[[row, col]] as i128;
-                for s in 0..pb {
-                    acc -= l21[i * pb + s] as i128 * target[[k + s, col]] as i128;
+            for j in 0..ncols {
+                acc[j] = target[[row, c0 + j]] as i128;
+            }
+            for s in 0..pb {
+                let l = l21[i * pb + s] as i128;
+                if l != 0 {
+                    let base = s * ncols;
+                    for j in 0..ncols {
+                        acc[j] -= l * rpack[base + j] as i128;
+                    }
                 }
-                target[[row, col]] = posmod_i128(acc, q);
+            }
+            for j in 0..ncols {
+                target[[row, c0 + j]] = posmod_i128(acc[j], q);
             }
         }
     }
