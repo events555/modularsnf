@@ -34,25 +34,27 @@ Use `modularsnf.ring` primitives: `gcdex`, `div`, `quo`, `stab`, `ann`.
 
 ## Testing
 
-* Structural assertions (`S = U A V`, diagonal shape, divisibility chain,
-  unimodularity) over hardcoded array equality.
-* Validate against SymPy integer-domain projection where feasible.
-* Run `just check` (or individually: `just lint`, `just typecheck`, `just test`) before finalizing.
+* Algorithm correctness lives in the Rust crate (`cargo test`): structural
+  assertions (`S = U A V`, diagonal shape, divisibility chain, unimodularity)
+  over random inputs, plus a Storjohann-vs-CRT cross-check.
+* The Python suite (`tests/`) covers only the PyO3 boundary: input validation,
+  type/shape marshalling, and the public-API contract on small cases.
+* Run `cargo test` and `just check` (`just lint`, `just typecheck`, `just test`)
+  before finalizing.
 
 ## File Structure
 
-* `modularsnf/ring.py` — ring primitives (Gcdex, Stab, Div, Ann).
+The SNF algorithms live in the Rust workspace; the Python package is a thin
+wrapper over the `modularsnf._rust` extension.
+
+* `crates/modularsnf/` — Rust lib crate: ring primitives, echelon/band
+  reduction, diagonalization (`snf.rs`/`band.rs`/`echelon.rs`/`diagonal.rs`),
+  and the CRT fast path (`crt.rs`).
+* `crates/modularsnf-py/` — PyO3 bindings exposed as `modularsnf._rust`.
+* `modularsnf/ring.py` — `RingZModN`, forwarding ring primitives to Rust.
 * `modularsnf/matrix.py` — `RingMatrix` data structure.
-* `modularsnf/echelon.py` — triangularization (Lemma 3.1).
-* `modularsnf/band.py` — band reduction (Lemmas 7.3, 7.4, Prop 7.1).
-* `modularsnf/diagonal.py` — diagonalization (Prop 7.7, Theorem 7.11).
-* `modularsnf/snf.py` — master pipeline (Lemma 7.14) + public
-  `smith_normal_form_mod` API.
-* `docs/algorithm.md` — mathematical foundation and algorithm description.
-* `docs/PLAN.md` — current ExecPlan.
-
-## ExecPlans
-
-For work spanning multiple modules or changing public APIs, write a plan in
-`docs/PLAN.md` before implementing. Users may say "use an ExecPlan" as
-shorthand.
+* `modularsnf/diagonal.py` — diagonalization wrappers.
+* `modularsnf/snf.py` — public `smith_normal_form_mod` API (default path).
+* `modularsnf/crt.py` — public `crt_snf` API (experimental fast path).
+* `docs/algorithm.md` — default algorithm (Storjohann band reduction).
+* `docs/crt.md` — CRT fast path design and correctness basis.
