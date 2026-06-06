@@ -1,10 +1,10 @@
 # Smith Normal form of Integer matrices mod N (Storjohann)
 
-This is a Python module that follows the deterministic algorithms presented in Arne Storjohann's PhD Dissertation *Algorithms for Matrix Canonical Forms* (ETH No. 13922, 2000).
+A Rust implementation (with a thin Python binding) of the deterministic algorithms presented in Arne Storjohann's PhD Dissertation *Algorithms for Matrix Canonical Forms* (ETH No. 13922, 2000).
 
-It implements the Lemmas and subsequent subroutines that are necessary for calculating the SNF without exponential intermediate values.
+It implements the Lemmas and subsequent subroutines that are necessary for calculating the SNF without exponential intermediate values. The algorithms live in the Rust `modularsnf` crate; the Python package is a thin wrapper over the native extension.
 
-It validates against SymPy using a known equivalence between calculating the Smith Normal form of an integer matrix, and then taking mod N, compared to solving it natively in the ring.
+Correctness is validated in the Rust test suite: random inputs are checked against the Smith form contract ($S = UAV$, divisibility chain, unimodular transforms), and the default Storjohann path is cross-checked against the independent CRT path.
 
 ## Quick Start
 
@@ -28,22 +28,30 @@ A matrix is **unimodular** over $\mathbb{Z}/N\mathbb{Z}$ when
 $\gcd(\det(M),\, N) = 1$, the modular analogue of $|\det(U)| = 1$
 over $\mathbb{Z}$.
 
-### Lower-level API
+For details on the default algorithm (band reduction, diagonalization,
+Storjohann's lemmas), see [docs/algorithm.md](docs/algorithm.md).
 
-For direct access to `RingMatrix` objects:
+## Alternative: CRT fast path (experimental)
+
+`smith_normal_form_mod` uses Storjohann's band reduction, which works for any
+modulus `N >= 2`. For the **small-modulus, large-matrix** regime there is a
+second, experimental algorithm that is several times faster: a CRT-based path
+that factors `N = prod p^e`, solves the SNF over each local ring `Z/p^e` by
+valuation-pivoted elimination, and recombines via the Chinese Remainder Theorem.
 
 ```python
-from modularsnf.ring import RingZModN
-from modularsnf.matrix import RingMatrix
-from modularsnf.snf import smith_normal_form
+from modularsnf import crt_snf
 
-ring = RingZModN(12)
-A = RingMatrix(ring, [[2, 4], [6, 8]])
-U, V, S = smith_normal_form(A)   # note: (U, V, S) order
+S, U, V = crt_snf([[2, 4, 0],
+                   [6, 8, 3],
+                   [0, 3, 9]], modulus=36)
+# Same (S, U, V) contract as smith_normal_form_mod; S = U @ A @ V (mod 36).
 ```
 
-For details on the algorithm (band reduction, diagonalization, Storjohann's
-lemmas), see [docs/algorithm.md](docs/algorithm.md).
+It requires the prime factorization of `N`; pass it explicitly as
+`factors=[(p, e), ...]` to amortize factoring across many calls with the same
+modulus. Prefer `smith_normal_form_mod` for general moduli. See
+[docs/crt.md](docs/crt.md) for the design and correctness basis.
 
 ## Development Workflow (modern Python)
 

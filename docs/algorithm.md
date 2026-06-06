@@ -1,5 +1,9 @@
 # Mathematical Foundation
 
+This document describes the **default** SNF algorithm (Storjohann band
+reduction), used by `smith_normal_form_mod`. For the alternative CRT-based fast
+path for small moduli, see [crt.md](crt.md).
+
 The algorithm has two main phases:
 1. **Band Reduction:** Transforming an arbitrary matrix into an upper bi-diagonal (2-banded) matrix.
 2. **Diagonalization:** Transforming the bi-diagonal matrix into the canonical Smith Normal Form.

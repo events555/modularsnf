@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "modularsnf"
-version = "0.4.0"
+version = "0.5.0"
 description = "A Python module for Smith Normal Form calculations over Z/N rings"
 readme = "README.md"
 license = "Apache-2.0"
@@ -22,11 +22,10 @@ dev = ["maturin>=1.7,<2", "pytest", "pytest-cov", "ruff", "ty", "sympy"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q -m 'not perf' --cov=modularsnf --cov-report=term-missing"
+addopts = "-ra -q --cov=modularsnf --cov-report=term-missing"
 testpaths = [
     "tests",
 ]
-markers = ["perf: performance sanity checks (run with: uv run pytest -m perf)"]
 
 [tool.maturin]
 manifest-path = "crates/modularsnf-py/Cargo.toml"

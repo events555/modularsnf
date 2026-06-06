@@ -5,11 +5,10 @@ lint:
     uv run ruff check .
 
 typecheck:
-    uv run ty check modularsnf/ scripts/profile_snf.py tests/conftest.py
+    uv run ty check modularsnf/ tests/
 
 test:
-    uv run pytest tests/ -x --backend python
-    uv run pytest tests/ -x --backend rust
+    uv run pytest tests/ -x
 
 # Verify Cargo workspace and pyproject.toml versions match
 check-version:
