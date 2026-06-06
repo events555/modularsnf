@@ -15,15 +15,20 @@ fn pmod(a: i64, n: i64) -> i64 {
     posmod_i128(a as i128, n)
 }
 
-/// Threshold below which q^2 (and a - b*c with a,b,c in [0,q)) fits in i64,
-/// so the hot loops avoid i128. q < 2^31 => q^2 < 2^62, comfortably in range.
+/// Moduli below this bound use i64 arithmetic in the hot loops; larger moduli
+/// widen to i128. For `q < 2^31`, products `q^2` stay under 2^62 and cannot
+/// overflow i64.
 const I64_FAST_MAX: i64 = 1i64 << 31;
 
 #[inline]
 fn mulmod(a: i64, b: i64, n: i64) -> i64 {
     if n < I64_FAST_MAX {
         let r = (a * b) % n;
-        if r < 0 { r + n } else { r }
+        if r < 0 {
+            r + n
+        } else {
+            r
+        }
     } else {
         posmod_i128(a as i128 * b as i128, n)
     }
@@ -35,7 +40,11 @@ fn mulmod(a: i64, b: i64, n: i64) -> i64 {
 fn sub_mul_mod(a: i64, b: i64, c: i64, q: i64) -> i64 {
     if q < I64_FAST_MAX {
         let r = (a - b * c) % q;
-        if r < 0 { r + q } else { r }
+        if r < 0 {
+            r + q
+        } else {
+            r
+        }
     } else {
         posmod_i128(a as i128 - b as i128 * c as i128, q)
     }
@@ -79,10 +88,11 @@ fn pval(mut x: i64, p: i64, cap: u32) -> u32 {
     v
 }
 
-/// Block width for the right-looking blocked LU (Phase L, unit stage).
+/// Panel width for the right-looking blocked LU in Phase L.
 const PANEL_B: usize = 48;
-/// The i64 GEMM accumulator is safe while `PANEL_B * (q-1)^2 < 2^63`. q < 2^28
-/// gives 48 * 2^56 < 2^62, so use the i64 micro-kernel below it, i128 above.
+/// Moduli below this bound use the i64 GEMM micro-kernel; larger moduli use the
+/// i128 kernel. The i64 accumulator sums `PANEL_B` products without overflow
+/// while `PANEL_B * (q-1)^2 < 2^63`; `q < 2^28` gives `48 * 2^56 < 2^62`.
 const GEMM_I64_MAX: i64 = 1i64 << 28;
 
 /// Minimal p-adic valuation over `mat[k.., k..]` (returns `e+1` if all zero).
@@ -105,10 +115,15 @@ fn min_valuation(mat: &Array2<i64>, k: usize, n: usize, m: usize, p: i64, e: u32
     lev
 }
 
-/// Apply a deferred panel update to `target` over columns `[c0, c1)`:
-/// first TRSM the panel rows `[k, k+pb)` by the unit-lower-triangular `L11`,
-/// then GEMM the trailing rows `[k+pb, n)` as `-= L21 @ panel (mod q)`.
-/// `l11[t*pb + s]` (s < t) and `l21[i*pb + s]` are the stored multipliers.
+/// Apply a factored panel's deferred update to `target`, over columns
+/// `[c0, c1)`. This is the standard two-step blocked-LU update, all mod `q`:
+///
+/// 1. triangular solve — update the panel rows `[k, k+pb)` against the unit
+///    lower-triangular factor `L11`;
+/// 2. matrix multiply — update the trailing rows `[k+pb, n)` by `-= L21 @ U12`.
+///
+/// `l11` and `l21` store the panel's multipliers in row-major order, indexed
+/// `l11[t*pb + s]` (with `s < t`) and `l21[i*pb + s]`.
 fn apply_block_update(
     target: &mut Array2<i64>,
     l11: &[i64],
@@ -124,7 +139,7 @@ fn apply_block_update(
     }
     let n = target.nrows();
     let pend = k + pb;
-    // TRSM: forward substitution against unit-lower-triangular L11.
+    // Triangular solve: forward substitution against unit-lower-triangular L11.
     for t in 1..pb {
         for s in 0..t {
             let f = l11[t * pb + s];
@@ -136,9 +151,9 @@ fn apply_block_update(
             }
         }
     }
-    // GEMM trailing update: trailing rows -= L21 @ U12 (mod q).
-    // Pack U12 (post-TRSM panel rows) into a contiguous (pb x ncols) buffer so
-    // the inner axpy streams contiguously instead of striding by row length.
+    // Trailing update: rows -= L21 @ U12 (mod q). Pack U12 (the panel rows,
+    // post-solve) into a contiguous pb-by-ncols buffer so the inner loop reads
+    // sequentially instead of striding by the matrix row length.
     let trail = n - pend;
     if trail == 0 {
         return;
@@ -163,7 +178,7 @@ fn apply_block_update(
                 if l != 0 {
                     let base = s * ncols;
                     for j in 0..ncols {
-                        acc[j] -= l * rpack[base + j]; // contiguous, autovectorizes
+                        acc[j] -= l * rpack[base + j];
                     }
                 }
             }
@@ -196,10 +211,11 @@ fn apply_block_update(
 }
 
 /// Blocked right-looking LU over the unit (valuation-0) part of `mat`.
-/// Eliminates leading columns whose pivot is a unit (mod p), updating `mat`
-/// and `u`; returns the first pivot index it could not place (a column with no
-/// unit), which the scalar path then finishes. `v` is untouched (no column
-/// swaps here). Pre-condition: `min_valuation(mat, 0, ..) == 0`.
+///
+/// Eliminates leading columns that have a unit pivot (mod p), updating `mat`
+/// and the left transform `u`. Returns the first column with no unit pivot,
+/// where the scalar path takes over. `v` is untouched, as this stage performs
+/// no column swaps. Precondition: `min_valuation(mat, 0, ..) == 0`.
 fn phase_l_blocked_unit(
     mat: &mut Array2<i64>,
     u: &mut Array2<i64>,
@@ -214,7 +230,7 @@ fn phase_l_blocked_unit(
     while k < r {
         let pend_max = (k + PANEL_B).min(r);
 
-        // ---- factor the panel columns [k, pend_max): unit row-pivoting ----
+        // Factor the panel columns [k, pend_max) with unit row-pivoting.
         let mut kk = k;
         while kk < pend_max {
             // find a unit (valuation 0) in column kk, rows [kk, n)
@@ -238,11 +254,11 @@ fn phase_l_blocked_unit(
                     u.swap([kk, col], [pr, col]);
                 }
             }
-            // Divide-by-pivot multipliers (the pivot is a unit). The pivot row
-            // is NOT normalized here; the diagonal is normalized once at the end
-            // so that mat and u undergo identical row operations — u's elimination
-            // is deferred (TRSM/GEMM via the stored L), and a normalize-then-
-            // eliminate / eliminate-then-normalize mismatch would corrupt it.
+            // Compute divide-by-pivot multipliers (the pivot is a unit). The
+            // pivot row is left un-normalized; diagonals are normalized once at
+            // the end so that `mat` and `u` undergo identical row operations.
+            // `u`'s elimination is deferred via the stored multipliers `L`, so
+            // normalizing here would desynchronize the two and corrupt `u`.
             let uinv = inv_mod(mat[[kk, kk]], q);
             for i in (kk + 1)..n {
                 if mat[[i, kk]] != 0 {
@@ -261,7 +277,8 @@ fn phase_l_blocked_unit(
         }
         let pb = pend - k;
 
-        // ---- extract L11 (unit lower-tri) and L21 (trailing-row) multipliers ----
+        // Extract the L11 (unit lower-triangular) and L21 (trailing-row)
+        // multipliers.
         let trail = n - pend;
         let mut l11 = vec![0i64; pb * pb];
         for t in 0..pb {
@@ -276,11 +293,11 @@ fn phase_l_blocked_unit(
             }
         }
 
-        // ---- deferred TRSM + GEMM on mat (cols [pend_max, m)) and u (all cols) ----
+        // Apply the deferred update to mat (cols [pend_max, m)) and u (all cols).
         apply_block_update(mat, &l11, &l21, k, pb, pend_max, m, q);
         apply_block_update(u, &l11, &l21, k, pb, 0, n, q);
 
-        // ---- zero the L storage below the diagonal of the pivot columns ----
+        // Zero the stored multipliers below the diagonal of the pivot columns.
         for t in 0..pb {
             for i in (k + t + 1)..n {
                 mat[[i, k + t]] = 0;
@@ -390,7 +407,7 @@ fn local_snf(a: &Array2<i64>, p: i64, e: u32) -> (Array2<i64>, Array2<i64>, Vec<
     let mut u = Array2::<i64>::eye(n);
     let mut v = Array2::<i64>::eye(m);
 
-    // ---- Phase L: column elimination -> U, mat becomes upper-triangular ----
+    // Phase L: column elimination produces U and leaves mat upper-triangular.
     // Blocked LU clears the valuation-0 bulk (trailing update = GEMM); the
     // scalar path finishes the higher-valuation / column-swap tail.
     let k0 = if min_valuation(&mat, 0, n, m, p, e) == 0 {
@@ -421,7 +438,7 @@ fn local_snf(a: &Array2<i64>, p: i64, e: u32) -> (Array2<i64>, Array2<i64>, Vec<
         }
     }
 
-    // ---- Phase R: diagonalize the upper-triangular mat -> V ----
+    // Phase R: diagonalize the upper-triangular mat, producing V.
     // Clear super-diagonal entries by column operations, processing pivots from
     // last to first so that fill created above row k lands in not-yet-processed
     // rows (and is cleared when those pivots are reached). col k of the upper-
@@ -480,13 +497,8 @@ pub fn crt_snf(
 
     let qs: Vec<i64> = factors.iter().map(|&(p, e)| p.pow(e)).collect();
 
-    // Phase 0 profiling: set CRT_PROFILE=1 to print a phase-time breakdown.
-    let prof = std::env::var("CRT_PROFILE").is_ok();
-    let t_local = std::time::Instant::now();
-
     let mut locals: Vec<(Array2<i64>, Array2<i64>, Vec<u32>)> =
         factors.iter().map(|&(p, e)| local_snf(a, p, e)).collect();
-    let d_local = t_local.elapsed();
 
     // Global invariant factors d_i = prod_p p^{vals_p[i]} (divides N).
     let mut d = vec![0i64; r];
@@ -499,7 +511,6 @@ pub fn crt_snf(
     }
 
     // Unit-normalize each prime's V so all primes realize the same d_i.
-    let t_norm = std::time::Instant::now();
     for pi in 0..np {
         let q = qs[pi];
         for i in 0..r {
@@ -517,10 +528,7 @@ pub fn crt_snf(
         }
     }
 
-    let d_norm = t_norm.elapsed();
-
     // CRT-recombine U (n x n) and V (m x m) entrywise across primes.
-    let t_recomb = std::time::Instant::now();
     let mut u = Array2::<i64>::zeros((n, n));
     let mut resid = vec![0i64; np];
     for ar in 0..n {
@@ -541,27 +549,9 @@ pub fn crt_snf(
         }
     }
 
-    let d_recomb = t_recomb.elapsed();
-
     let mut s = Array2::<i64>::zeros((n, m));
     for (i, &di) in d.iter().enumerate() {
         s[[i, i]] = di;
-    }
-
-    if prof {
-        let total = d_local + d_norm + d_recomb;
-        eprintln!(
-            "[CRT_PROFILE] n={n} m={m} N={modulus} np={np} | \
-             local_snf={:.3}ms ({:.0}%) normalize={:.3}ms ({:.0}%) \
-             recombine={:.3}ms ({:.0}%) | total={:.3}ms",
-            d_local.as_secs_f64() * 1e3,
-            100.0 * d_local.as_secs_f64() / total.as_secs_f64(),
-            d_norm.as_secs_f64() * 1e3,
-            100.0 * d_norm.as_secs_f64() / total.as_secs_f64(),
-            d_recomb.as_secs_f64() * 1e3,
-            100.0 * d_recomb.as_secs_f64() / total.as_secs_f64(),
-            total.as_secs_f64() * 1e3,
-        );
     }
 
     (u, v, s)
@@ -571,18 +561,8 @@ pub fn crt_snf(
 mod tests {
     use super::*;
     use ndarray::Array2;
-
-    /// Deterministic LCG so tests need no external rng dependency.
-    struct Lcg(u64);
-    impl Lcg {
-        fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            self.0 >> 16
-        }
-        fn below(&mut self, n: i64) -> i64 {
-            (self.next() % n as u64) as i64
-        }
-    }
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
 
     fn matmul_mod(a: &Array2<i64>, b: &Array2<i64>, q: i64) -> Array2<i64> {
         let (n, k) = (a.nrows(), a.ncols());
@@ -638,7 +618,7 @@ mod tests {
     #[test]
     fn local_snf_is_valid_smith_form() {
         let cases = [(2u32, 1u32), (2, 3), (3, 2), (5, 1), (5, 2), (7, 3)];
-        let mut rng = Lcg(0x1234_5678_9abc_def0);
+        let mut rng = StdRng::seed_from_u64(0x1234_5678_9abc_def0);
         let mut checked = 0;
         for &(p, e) in &cases {
             let p = p as i64;
@@ -646,7 +626,7 @@ mod tests {
             for n in [1usize, 2, 5, 9, 16, 23] {
                 for m in [1usize, 3, 5, 9, 16] {
                     for _trial in 0..6 {
-                        let a = Array2::from_shape_fn((n, m), |_| rng.below(q));
+                        let a = Array2::from_shape_fn((n, m), |_| rng.gen_range(0..q));
                         assert_valid_snf(&a, p, e);
                         checked += 1;
                     }
@@ -666,15 +646,32 @@ mod tests {
         let prod = matmul_mod(&matmul_mod(&uu, a, q), &vv, q);
         for i in 0..n {
             for j in 0..m {
-                let expect = if i == j && i < r { pmod(p.pow(vals[i]), q) } else { 0 };
-                assert_eq!(prod[[i, j]], expect, "U*A*V at ({i},{j}) p={p} e={e} n={n} m={m}");
+                let expect = if i == j && i < r {
+                    pmod(p.pow(vals[i]), q)
+                } else {
+                    0
+                };
+                assert_eq!(
+                    prod[[i, j]],
+                    expect,
+                    "U*A*V at ({i},{j}) p={p} e={e} n={n} m={m}"
+                );
             }
         }
         for i in 1..r {
-            assert!(vals[i - 1] <= vals[i], "vals not ascending {vals:?} p={p} e={e}");
+            assert!(
+                vals[i - 1] <= vals[i],
+                "vals not ascending {vals:?} p={p} e={e}"
+            );
         }
-        assert!(invertible_mod_p(&uu, p), "U not unimodular p={p} e={e} n={n} m={m}");
-        assert!(invertible_mod_p(&vv, p), "V not unimodular p={p} e={e} n={n} m={m}");
+        assert!(
+            invertible_mod_p(&uu, p),
+            "U not unimodular p={p} e={e} n={n} m={m}"
+        );
+        assert!(
+            invertible_mod_p(&vv, p),
+            "V not unimodular p={p} e={e} n={n} m={m}"
+        );
     }
 
     /// Exercise the blocked-LU paths: large n (multi-panel), rank-deficiency
@@ -682,7 +679,7 @@ mod tests {
     #[test]
     fn local_snf_blocked_paths() {
         let cases = [(2u32, 1u32), (2, 4), (3, 2), (3, 3), (5, 2), (7, 2)];
-        let mut rng = Lcg(0xdead_beef_0bad_f00d);
+        let mut rng = StdRng::seed_from_u64(0xdead_beef_0bad_f00d);
         let mut checked = 0;
         for &(p, e) in &cases {
             let p = p as i64;
@@ -690,36 +687,40 @@ mod tests {
             // Larger square sizes spanning the panel width (PANEL_B = 48).
             for &n in &[40usize, 49, 64, 97] {
                 // (1) dense random: generically full-rank mod p (single long blocked run)
-                let a = Array2::from_shape_fn((n, n), |_| rng.below(q));
+                let a = Array2::from_shape_fn((n, n), |_| rng.gen_range(0..q));
                 assert_valid_snf(&a, p, e);
                 checked += 1;
 
                 // (2) low rank mod p: A = B @ C with inner dim rk << n, so the
                 //     blocked unit pass exhausts units early and hands to scalar.
                 for &rk in &[1usize, 3, 7] {
-                    let b = Array2::from_shape_fn((n, rk), |_| rng.below(q));
-                    let c = Array2::from_shape_fn((rk, n), |_| rng.below(q));
+                    let b = Array2::from_shape_fn((n, rk), |_| rng.gen_range(0..q));
+                    let c = Array2::from_shape_fn((rk, n), |_| rng.gen_range(0..q));
                     let a = matmul_mod(&b, &c, q);
                     assert_valid_snf(&a, p, e);
                     checked += 1;
                 }
 
                 // (3) p | A everywhere: min valuation >= 1, blocked pass skipped.
-                let a = Array2::from_shape_fn((n, n), |_| (rng.below(q / p.max(1)) * p) % q);
+                let a = Array2::from_shape_fn((n, n), |_| (rng.gen_range(0..q / p.max(1)) * p) % q);
                 assert_valid_snf(&a, p, e);
                 checked += 1;
 
                 // (4) mixed: a unit block plus a p-scaled block (multi-level).
                 let a = Array2::from_shape_fn((n, n), |(i, j)| {
-                    if (i + j) % 3 == 0 { rng.below(q) } else { (rng.below(q) * p) % q }
+                    if (i + j) % 3 == 0 {
+                        rng.gen_range(0..q)
+                    } else {
+                        (rng.gen_range(0..q) * p) % q
+                    }
                 });
                 assert_valid_snf(&a, p, e);
                 checked += 1;
 
                 // (5) rectangular, both orientations.
-                let a = Array2::from_shape_fn((n, n / 2 + 1), |_| rng.below(q));
+                let a = Array2::from_shape_fn((n, n / 2 + 1), |_| rng.gen_range(0..q));
                 assert_valid_snf(&a, p, e);
-                let a = Array2::from_shape_fn((n / 2 + 1, n), |_| rng.below(q));
+                let a = Array2::from_shape_fn((n / 2 + 1, n), |_| rng.gen_range(0..q));
                 assert_valid_snf(&a, p, e);
                 checked += 2;
             }

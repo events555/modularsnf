@@ -129,10 +129,7 @@ impl RingZModN {
         let b_val = posmod(b, self.n);
         let (g, x, _) = egcd(b_val, self.n);
         if g == 0 || a_val % g != 0 {
-            return Err(format!(
-                "{a} not divisible by {b} in Z/{}",
-                self.n
-            ));
+            return Err(format!("{a} not divisible by {b} in Z/{}", self.n));
         }
         Ok(posmod_i128((x as i128) * ((a_val / g) as i128), self.n / g))
     }

@@ -15,10 +15,7 @@ fn posmod(a: i64, n: i64) -> i64 {
 
 /// Top-level SNF for a square matrix.
 /// Returns (U, V, S) such that S = U @ A @ V.
-pub fn smith_square(
-    a: &Array2<i64>,
-    ring: &RingZModN,
-) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
+pub fn smith_square(a: &Array2<i64>, ring: &RingZModN) -> (Array2<i64>, Array2<i64>, Array2<i64>) {
     let n_mod = ring.n();
     let n = a.nrows();
 
