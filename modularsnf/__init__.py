@@ -1,10 +1,8 @@
-from .matrix import RingMatrix
-from .ring import RingZModN
+from .crt import crt_snf
 from .snf import SNFResult, smith_normal_form_mod
 
 __all__ = [
-    "RingMatrix",
-    "RingZModN",
     "SNFResult",
+    "crt_snf",
     "smith_normal_form_mod",
 ]
